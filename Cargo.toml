@@ -1,0 +1,6 @@
+[package]
+name = "rlg"
+version = "0.1.0"
+authors = ["Sergey Veselkov <veselkovsd@yandex.ru>"]
+
+[dependencies]
