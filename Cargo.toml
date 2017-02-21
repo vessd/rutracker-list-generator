@@ -4,3 +4,13 @@ version = "0.1.0"
 authors = ["Sergey Veselkov <veselkovsd@yandex.ru>"]
 
 [dependencies]
+serde = "0.9.5"
+serde_derive = "0.9.7"
+serde_json = "0.9.3"
+# https://github.com/seanmonstar/reqwest/issues/11
+hyper = "0.10.4"
+reqwest = "0.4.0"
+unqlite = "1.2.1"
+
+[profile.release]
+lto = true
