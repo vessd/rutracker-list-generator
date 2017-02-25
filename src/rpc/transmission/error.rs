@@ -1,4 +1,5 @@
 use std::{io, fmt, error, result};
+use self::Error::*;
 
 pub type Result<T> = result::Result<T, Error>;
 
@@ -16,19 +17,17 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::Io(ref err) => err.fmt(f),
-            Error::Reqwest(ref err) => err.fmt(f),
-            Error::SerdeJson(ref err) => err.fmt(f),
-            Error::Ipv6 => write!(f, "transmission doesn't support Ipv6"),
-            Error::ParseIdError => {
-                write!(f, "failed to extract a identifier from the response header")
-            }
-            Error::UnexpectedResponse(ref s) => {
+            Io(ref err) => err.fmt(f),
+            Reqwest(ref err) => err.fmt(f),
+            SerdeJson(ref err) => err.fmt(f),
+            Ipv6 => write!(f, "transmission doesn't support Ipv6"),
+            ParseIdError => write!(f, "failed to extract a identifier from the response header"),
+            UnexpectedResponse(ref s) => {
                 write!(f,
                        "unexpected response from the transmission server: {}",
                        s.to_string())
             }
-            Error::TransmissionError(ref s) => {
+            TransmissionError(ref s) => {
                 write!(f, "the transmission server responded with an error: {}", s)
             }
         }
@@ -38,25 +37,25 @@ impl fmt::Display for Error {
 impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
-            Error::Io(ref err) => err.description(),
-            Error::Reqwest(ref err) => err.description(),
-            Error::SerdeJson(ref err) => err.description(),
-            Error::Ipv6 => "ipv6 isn't supported",
-            Error::ParseIdError => "failed to parse id",
-            Error::UnexpectedResponse(_) => "unexpected response",
-            Error::TransmissionError(_) => "transmission error",
+            Io(ref err) => err.description(),
+            Reqwest(ref err) => err.description(),
+            SerdeJson(ref err) => err.description(),
+            Ipv6 => "ipv6 isn't supported",
+            ParseIdError => "failed to parse id",
+            UnexpectedResponse(_) => "unexpected response",
+            TransmissionError(_) => "transmission error",
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
         match *self {
-            Error::Io(ref err) => Some(err),
-            Error::Reqwest(ref err) => Some(err),
-            Error::SerdeJson(ref err) => Some(err),
-            Error::Ipv6 => None,
-            Error::ParseIdError => None,
-            Error::UnexpectedResponse(_) => None,
-            Error::TransmissionError(_) => None,
+            Io(ref err) => Some(err),
+            Reqwest(ref err) => Some(err),
+            SerdeJson(ref err) => Some(err),
+            Ipv6 |
+            ParseIdError |
+            UnexpectedResponse(_) |
+            TransmissionError(_) => None,
         }
     }
 }

@@ -19,7 +19,7 @@ use rpc::TorrentClient;
 fn main() {
     let mut torrent_client = rpc::Transmission::new("192.168.1.104:9091", None).unwrap();
     let t_list = torrent_client.list().unwrap();
-    println!("{:?}",t_list);
-    println!("{:?}",t_list[0]);
+    println!("{:?}", t_list);
+    println!("{:?}", t_list[0]);
     torrent_client.start(&vec![t_list[0].get_hash()]).unwrap();
 }
