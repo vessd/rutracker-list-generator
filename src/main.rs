@@ -1,25 +1,43 @@
 #![allow(dead_code)]
+#![cfg_attr(feature = "clippy", feature(plugin))]
+#![cfg_attr(feature = "clippy", plugin(clippy))]
 
+#[macro_use]
+extern crate hyper;
+//https://github.com/seanmonstar/reqwest/issues/11
+
+extern crate reqwest;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
-extern crate reqwest;
 extern crate unqlite;
-// https://github.com/seanmonstar/reqwest/issues/11
-#[macro_use]
-extern crate hyper;
 
 mod rpc;
 mod rutracker;
+mod torrent;
 
-use rpc::TorrentClient;
+use rutracker::RutrackerApi;
+use torrent::TorrentList;
+use std::io::Write;
+
+const APIURL: &str = "https://api.t-ru.org/";
+const FORUMURL: &str = "https://rutracker.cr/forum/";
+const TRANSMISSION: &str = "http://127.0.0.1:9091/transmission/rpc/";
+
+fn print_flush(s: &str) {
+    print!("{}", s);
+    std::io::stdout().flush().expect("flush");
+}
 
 fn main() {
-    let mut torrent_client = rpc::Transmission::new("192.168.1.104:9091", None).unwrap();
-    let t_list = torrent_client.list().unwrap();
-    println!("{:?}", t_list);
-    println!("{:?}", t_list[0]);
-    torrent_client.start(&vec![t_list[0].get_hash()]).unwrap();
+    print_flush("Соединение с Rutracker API...");
+    let api = RutrackerApi::new(APIURL).unwrap();
+    println!("готово");
+    print_flush("Соединение с Transmission...");
+    let mut torrent_client = rpc::Transmission::new(TRANSMISSION, None).unwrap();
+    println!("готово");
+    let list = TorrentList::new(&mut torrent_client, &api).unwrap();
+    println!("{:?}", list);
 }

@@ -1,5 +1,5 @@
 use rpc::transmission;
-use std::{fmt, error, result};
+use std::{error, fmt, result};
 
 pub type Result<T> = result::Result<T, Error>;
 

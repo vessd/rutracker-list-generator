@@ -3,32 +3,29 @@
 mod error;
 mod torrent;
 
-use std::net::{ToSocketAddrs, SocketAddr};
-use std::{io, fmt, result};
+use std::{fmt, result};
 use serde_json::Value;
-use reqwest::{self, Client, StatusCode};
+use reqwest::{self, Client, IntoUrl, StatusCode, Url};
 pub use self::error::{Error, Result};
 
 /// A enum that represents the "ids" field in request body.
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 enum TorrentSelect<'a> {
     Ids(&'a [&'a str]),
     All,
 }
 
 /// A struct that represents the "delete-local-data" field in request body.
-#[derive(Debug,Clone,Copy,Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 struct DeleteLocalData(bool);
 
 /// A structure that represents fields for torrent-get request.
 ///
 /// It provides only the minimum required fields.
-#[derive(Debug,Clone,Copy,Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 enum ArgGet {
-    #[serde(rename = "hashString")]
-    HashString,
-    #[serde(rename = "status")]
-    Status,
+    #[serde(rename = "hashString")] HashString,
+    #[serde(rename = "status")] Status,
 }
 
 // https://github.com/serde-rs/serde/issues/497
@@ -39,13 +36,13 @@ macro_rules! enum_number_de {
             $($variant = $value,)*
         }
 
-        impl ::serde::Deserialize for $name {
+        impl<'de> ::serde::Deserialize<'de> for $name {
             fn deserialize<D>(deserializer: D) -> result::Result<Self, D::Error>
-                where D: ::serde::Deserializer
+                where D: ::serde::Deserializer<'de>
             {
                 struct Visitor;
 
-                impl ::serde::de::Visitor for Visitor {
+                impl<'de> ::serde::de::Visitor<'de> for Visitor {
                     type Value = $name;
 
                     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -83,30 +80,27 @@ enum_number_de!(TorrentStatus {
 /// A struct that represents a "torrents" object in response body.
 ///
 /// It provides only the minimum required fields.
-#[derive(Debug,Clone,Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ResponseGet {
-    #[serde(rename = "hashString")]
-    hash: String,
+    #[serde(rename = "hashString")] hash: String,
     status: TorrentStatus,
 }
 
 /// A struct that represents a "arguments" object in response body.
-#[derive(Debug,Clone,Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ResponseArgument {
-    #[serde(default)]
-    torrents: Vec<ResponseGet>,
+    #[serde(default)] torrents: Vec<ResponseGet>,
 }
 
 /// A enum that represents a response status.
-#[derive(Debug,Clone,Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 enum ResponseStatus {
-    #[serde(rename = "success")]
-    Success,
+    #[serde(rename = "success")] Success,
     Error(String),
 }
 
 /// A struct that represents a response body.
-#[derive(Debug,Clone,Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Response {
     arguments: ResponseArgument,
     result: ResponseStatus,
@@ -124,7 +118,7 @@ struct Credentials {
 /// Torrent client.
 #[derive(Debug)]
 pub struct Transmission {
-    address: String,
+    url: Url,
     credentials: Option<Credentials>,
     sid: SessionId,
     http_client: Client,
@@ -153,18 +147,11 @@ macro_rules! empty_response {
 impl Transmission {
     /// Crate new `Transmission` struct.
     ///
-    /// Fails if a `address` can not be resolved or if HTTP client fails.
-    pub fn new<A>(address: A, credentials: Option<(&str, &str)>) -> Result<Transmission>
-        where A: ToSocketAddrs
+    /// Fails if a `url` can not be parsed or if HTTP client fails.
+    pub fn new<U>(url: U, credentials: Option<(&str, &str)>) -> Result<Transmission>
+    where
+        U: IntoUrl,
     {
-        let address = if let Some(a) = address.to_socket_addrs()?.next() {
-            match a {
-                SocketAddr::V4(socket) => String::from("http://") + socket.to_string().as_str() + "/transmission/rpc",
-                SocketAddr::V6(_) => return Err(Error::Ipv6),
-            }
-        } else {
-            return Err(Error::from(io::Error::new(io::ErrorKind::Other, "fail cast to socket address")));
-        };
         let credentials = if let Some((u, p)) = credentials {
             Some(Credentials {
                 user: u.to_string(),
@@ -175,7 +162,7 @@ impl Transmission {
         };
 
         Ok(Transmission {
-            address: address,
+            url: url.into_url()?,
             credentials: credentials,
             sid: SessionId(String::new()),
             http_client: Client::new()?,
@@ -189,17 +176,20 @@ impl Transmission {
     /// Otherwise return an error.
     fn request(&mut self, json: &Value) -> Result<reqwest::Response> {
         let resp = self.http_client
-            .post(&self.address)
-            .json(json)
+            .post(self.url.clone())?
+            .json(json)?
             .header(self.sid.clone())
             .send()?;
-        match *resp.status() {
+        match resp.status() {
             StatusCode::Ok => Ok(resp),
             StatusCode::Conflict => {
-                self.sid = resp.headers().get::<SessionId>().ok_or(Error::ParseIdError)?.clone();
+                self.sid = resp.headers()
+                    .get::<SessionId>()
+                    .ok_or(Error::ParseIdError)?
+                    .clone();
                 self.request(json)
             }
-            _ => Err(Error::UnexpectedResponse(*resp.status())),
+            _ => Err(Error::UnexpectedResponse(resp.status())),
         }
     }
 
@@ -214,7 +204,8 @@ impl Transmission {
 
     /// Get a list of torrents from the Transmission.
     fn get(&mut self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
-        let responce = self.request(&requ_json!(t,"torrent-get","fields":f))?.json::<Response>()?;
+        let responce = self.request(&requ_json!(t, "torrent-get", "fields": f))?
+            .json::<Response>()?;
         match responce.result {
             ResponseStatus::Success => Ok(responce.arguments.torrents),
             ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),
