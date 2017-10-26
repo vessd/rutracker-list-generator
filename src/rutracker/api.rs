@@ -1,13 +1,36 @@
 //! A module to access Rutracker API
 
-mod error;
-
 use std::collections::HashMap;
 use reqwest::{self, Client, IntoUrl, Url};
-pub use self::error::{Error, Result};
 use serde_json::Value;
 
 type PeerStats = (usize, usize, usize);
+pub type Result<T> = ::std::result::Result<T, Error>;
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum Error {
+        UrlError(err: ::reqwest::UrlError) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        Reqwest(err: ::reqwest::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        ApiError(method: &'static str, err: ResponseError) {
+            description("Rutracker API error")
+            display( "{}: {{ code: {}, text: {} }}",
+                method,
+                err.code,
+                err.text)
+        }
+    }
+}
 
 /// Limit of request.
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
@@ -77,7 +100,7 @@ macro_rules! dynamic {
 }
 
 impl RutrackerApi {
-    pub fn new<S: IntoUrl>(url: S) -> Result<RutrackerApi> {
+    pub fn new<S: IntoUrl>(url: S) -> Result<Self> {
         let url = url.into_url()?;
         Ok(RutrackerApi {
             limit: RutrackerApi::get_limit(&url)?,

@@ -2,11 +2,23 @@
 
 mod deluge;
 mod transmission;
-mod error;
 
-pub use self::error::{Error, Result};
 pub use self::transmission::Transmission;
 use std::collections::HashMap;
+
+pub type Result<T> = ::std::result::Result<T, Error>;
+
+quick_error!{
+    #[derive(Debug)]
+    pub enum Error {
+        Transmission(err: self::transmission::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+    }
+}
 
 /// Torrent status.
 #[derive(Debug, Clone, Copy, PartialEq)]

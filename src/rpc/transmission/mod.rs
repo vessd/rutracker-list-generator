@@ -1,12 +1,48 @@
 //! A minimal implementation of rpc client for Tranmission.
-
-mod error;
 mod torrent;
 
 use std::{fmt, result};
 use serde_json::Value;
 use reqwest::{self, Client, IntoUrl, StatusCode, Url};
-pub use self::error::{Error, Result};
+
+pub type Result<T> = result::Result<T, Error>;
+
+quick_error!{
+    #[derive(Debug)]
+    pub enum Error {
+        Reqwest(err: ::reqwest::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        SerdeJson(err: ::serde_json::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        UrlError(err: ::reqwest::UrlError) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        ParseIdError {
+            description("failed to parse id")
+            display("failed to extract a identifier from the response header")
+
+        }
+        UnexpectedResponse(status: ::reqwest::StatusCode) {
+            description("unexpected response")
+            display("unexpected response from the transmission server: {}", status)
+        }
+        TransmissionError(err: String) {
+            description("transmission error")
+            display("the transmission server responded with an error: {}", err)
+        }
+    }
+}
 
 /// A enum that represents the "ids" field in request body.
 #[derive(Debug, Clone, Copy)]
@@ -148,7 +184,7 @@ impl Transmission {
     /// Crate new `Transmission` struct.
     ///
     /// Fails if a `url` can not be parsed or if HTTP client fails.
-    pub fn new<U>(url: U, credentials: Option<(&str, &str)>) -> Result<Transmission>
+    pub fn new<U>(url: U, credentials: Option<(&str, &str)>) -> Result<Self>
     where
         U: IntoUrl,
     {

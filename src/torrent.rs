@@ -1,8 +1,25 @@
-mod error;
-
-pub use self::error::Error;
 use rpc::{TorrentClient, TorrentStatus};
 use rutracker::api::{RutrackerApi, TopicData};
+
+pub type Result<T> = ::std::result::Result<T, Error>;
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum Error {
+        Rpc(err: ::rpc::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        Api(err: ::rutracker::api::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+    }
+}
 
 #[derive(Debug)]
 struct Torrent {
@@ -11,7 +28,7 @@ struct Torrent {
 }
 
 impl Torrent {
-    fn new(status: TorrentStatus, data: TopicData) -> Torrent {
+    fn new(status: TorrentStatus, data: TopicData) -> Self {
         Torrent { data, status }
     }
 }
@@ -22,7 +39,7 @@ pub struct TorrentList {
 }
 
 impl TorrentList {
-    pub fn new<C>(client: &mut C, api: &RutrackerApi) -> Result<TorrentList, Error>
+    pub fn new<C>(client: &mut C, api: &RutrackerApi) -> Result<Self>
     where
         C: TorrentClient,
     {
