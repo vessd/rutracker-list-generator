@@ -83,17 +83,21 @@ macro_rules! dynamic {
                 url.query_pairs_mut().append_pair("by", stringify!($arrayname));
                 url
             };
+            debug!(concat!("RutrackerApi::",stringify!($name),"::base_url: {:?}"), base_url);
             let mut result = HashMap::new();
             for chunk in $arrayname.chunks(self.limit) {
                 let val = chunk.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",");
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
+                trace!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);
                 let res = self.http_client.get(url)?.send()?.json::<Response<HashMap<$key,Option<$val>>>>()?;
+                trace!(concat!("RutrackerApi::",stringify!($name),"::res: {:?}"), res);
                 match res.error {
                     None => result.extend(res.result.into_iter()),
                     Some(err) => return Err(Error::ApiError(stringify!($name), err)),
                 }
             }
+            trace!(concat!("RutrackerApi::",stringify!($name),"::result: {:?}"), result);
             Ok(result)
         }
     }
@@ -102,6 +106,7 @@ macro_rules! dynamic {
 impl RutrackerApi {
     pub fn new<S: IntoUrl>(url: S) -> Result<Self> {
         let url = url.into_url()?;
+        debug!("RutrackerApi::new::url: {:?}", url);
         Ok(RutrackerApi {
             limit: RutrackerApi::get_limit(&url)?,
             url: url,
@@ -111,6 +116,7 @@ impl RutrackerApi {
     /// Get limit of request.
     fn get_limit(url: &Url) -> Result<usize> {
         let res = reqwest::get(url.join("v1/get_limit")?)?.json::<Response<Limit>>()?;
+        debug!("RutrackerApi::get_limit::res: {:?}", res);
         match res.error {
             None => Ok(res.result.limit),
             Some(err) => Err(Error::ApiError("get_limit", err)),
@@ -128,10 +134,12 @@ impl RutrackerApi {
         let url = self.url
             .join("v1/static/pvc/f/")?
             .join(forum_id.to_string().as_str())?;
+        trace!("RutrackerApi:pvc:url {:?}", url);
         let res = self.http_client
             .get(url)?
             .send()?
             .json::<Response<HashMap<String, Option<PeerStats>>>>()?;
+        trace!("RutrackerApi:pvc:res {:?}", res);
         match res.error {
             None => Ok(res.result),
             Some(err) => Err(Error::ApiError("pvc", err)),

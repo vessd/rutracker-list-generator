@@ -57,6 +57,8 @@ pub struct Config {
     pub rpc_password: Option<String>,
     pub user_id: Option<usize>,
     pub password: Option<String>,
+    pub api_url: String,
+    pub forum_url: String,
 }
 
 impl Default for Config {
@@ -65,13 +67,15 @@ impl Default for Config {
             forum: Vec::new(),
             ignored_ids: Vec::new(),
             log_file: None,
-            log_level: 0,
+            log_level: 3,
             real_kill: false,
-            rpc_address: String::from("localhost:9091"),
+            rpc_address: String::from("http://127.0.0.1:9091/transmission/rpc/"),
             rpc_user: None,
             rpc_password: None,
             user_id: None,
             password: None,
+            api_url: String::from("https://api.t-ru.org/"),
+            forum_url: String::from("https://rutracker.cr/forum/"),
         }
     }
 }

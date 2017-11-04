@@ -44,6 +44,7 @@ impl TorrentList {
         C: TorrentClient,
     {
         let mut client_list = client.list()?;
+        trace!("TorrentList::new::client_list: {:?}", client_list);
         let ids = api.get_topic_id(&client_list
             .iter()
             .map(|(hash, _)| hash.as_str())
@@ -51,10 +52,12 @@ impl TorrentList {
             .into_iter()
             .filter_map(|(_, id)| id)
             .collect::<Vec<usize>>();
+        trace!("TorrentList::new::ids: {:?}", ids);
         let topics_data = api.get_tor_topic_data(&ids)?
             .into_iter()
             .filter_map(|(_, t)| t)
             .collect::<Vec<TopicData>>();
+        trace!("TorrentList::new::topics_data: {:?}", topics_data);
         Ok(TorrentList {
             list: topics_data
                 .into_iter()

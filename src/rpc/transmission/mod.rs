@@ -196,7 +196,7 @@ impl Transmission {
         } else {
             None
         };
-
+        debug!("Transmission::new::credentials: {:?}", credentials);
         Ok(Transmission {
             url: url.into_url()?,
             credentials: credentials,
@@ -216,6 +216,7 @@ impl Transmission {
             .json(json)?
             .header(self.sid.clone())
             .send()?;
+        trace!("Transmission::request::resp: {:?}", resp);
         match resp.status() {
             StatusCode::Ok => Ok(resp),
             StatusCode::Conflict => {
@@ -242,6 +243,7 @@ impl Transmission {
     fn get(&mut self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
         let responce = self.request(&requ_json!(t, "torrent-get", "fields": f))?
             .json::<Response>()?;
+        trace!("Transmission::get::responce: {:?}", responce);
         match responce.result {
             ResponseStatus::Success => Ok(responce.arguments.torrents),
             ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),
