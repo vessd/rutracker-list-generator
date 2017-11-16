@@ -4,7 +4,9 @@ mod deluge;
 mod transmission;
 
 pub use self::transmission::Transmission;
+pub use self::deluge::Deluge;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 
@@ -29,7 +31,7 @@ pub enum TorrentStatus {
 }
 
 /// A trait for any object that will represent a torrent client.
-pub trait TorrentClient {
+pub trait TorrentClient: Debug {
     /// Returns a list of all torrents in the client.
     fn list(&mut self) -> Result<HashMap<String, TorrentStatus>>;
     /// Starts a list of torrents.

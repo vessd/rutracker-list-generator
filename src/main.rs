@@ -1,8 +1,9 @@
 #![allow(dead_code)]
+#![allow(cyclomatic_complexity)]
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 
-//https://github.com/seanmonstar/reqwest/issues/11
+// https://github.com/seanmonstar/reqwest/issues/11
 #[macro_use]
 extern crate hyper;
 #[macro_use]
@@ -26,10 +27,11 @@ mod config;
 
 use rutracker::RutrackerApi;
 use torrent::TorrentList;
-use config::Config;
+use config::{Client, Config};
 use std::fs::File;
 use std::env;
-use simplelog::{LogLevelFilter, SimpleLogger, TermLogger, WriteLogger, LogLevel};
+// https://github.com/Drakulix/simplelog.rs/issues/3
+use simplelog::{LogLevel, LogLevelFilter, SimpleLogger, TermLogger, WriteLogger};
 
 fn init_log(config: &Config) {
     let log_level = match config.log_level {
@@ -53,7 +55,8 @@ fn init_log(config: &Config) {
                 Err(e) => {
                     match TermLogger::init(LogLevelFilter::Error, log_config) {
                         Ok(()) => (),
-                        Err(e) => if SimpleLogger::init(LogLevelFilter::Error, log_config).is_err() {
+                        Err(e) => if SimpleLogger::init(LogLevelFilter::Error, log_config).is_err()
+                        {
                             println!("couldn't init any logger");
                         } else {
                             error!("{}", e);
@@ -88,19 +91,75 @@ fn init_log(config: &Config) {
 
 fn main() {
     let config = if let Some(f) = env::args().nth(1) {
-        Config::from_file(f).unwrap()
+        f
     } else {
-        Config::default()
+        String::from("rlg.toml")
+    };
+    let config = match Config::from_file(&config) {
+        Ok(conf) => conf,
+        Err(err) => {
+            println!("[ERROR] {}: {}", config, err);
+            std::process::exit(1)
+        }
     };
     init_log(&config);
-    debug!("config: {:?}", config);
     info!("Соединение с Rutracker API...");
-    let api = RutrackerApi::new(config.api_url.as_str()).unwrap();
-    debug!("api: {:?}", api);
-    info!("Соединение с Transmission...");
-    let mut torrent_client = rpc::Transmission::new(config.rpc_address.as_str(), None).unwrap();
-    debug!("torrent_client: {:?}", torrent_client);
-    info!("Запрос списка раздач из клиента...");
-    let list = TorrentList::new(&mut torrent_client, &api).unwrap();
+    let api = match RutrackerApi::new(config.api_url.as_str()) {
+        Ok(api) => api,
+        Err(err) => {
+            error!("{}", err);
+            std::process::exit(1)
+        }
+    };
+    let mut list = TorrentList::new(&api, &config.ignored_ids);
+    info!("Запрос списка имеющихся раздач...");
+    for r in &config.rpc {
+        trace!("config.rpc: {:?}", r);
+        match r.client {
+            Client::Deluge => match list.add_client(Box::new(rpc::Deluge::new())) {
+                Ok(()) => (),
+                Err(err) => error!("{}", err),
+            },
+            Client::Transmission => match rpc::Transmission::new(r.address.as_str(), None) {
+                Ok(client) => match list.add_client(Box::new(client)) {
+                    Ok(()) => (),
+                    Err(err) => error!("{}", err),
+                },
+                Err(err) => error!("{}", err),
+            },
+        }
+    }
     trace!("list: {:?}", list);
+    for f in &config.forum {
+        let mut forum_name = match api.get_forum_name(&f.forum_ids) {
+            Ok(name) => name,
+            Err(err) => {
+                error!("{}", err);
+                f.forum_ids
+                    .iter()
+                    .map(|&id| (id, Some(id.to_string())))
+                    .collect()
+            }
+        };
+        debug!("forum_name: {:?}", forum_name);
+        for (key, val) in &mut forum_name {
+            if val.is_none() {
+                warn!(
+                    "Не удалось получить название форума для id: {}",
+                    key
+                );
+                *val = Some(key.to_string());
+            }
+        }
+        for id in &f.forum_ids {
+            let mut topics_stats = match api.pvc(*id) {
+                Ok(stats) => stats,
+                Err(err) => {
+                    error!("{:?}", err);
+                    continue;
+                }
+            };
+            list.exec(config.real_kill, f, &mut topics_stats);
+        }
+    }
 }

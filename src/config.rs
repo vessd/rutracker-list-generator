@@ -24,6 +24,20 @@ quick_error! {
     }
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub enum Client {
+    Deluge,
+    Transmission,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Rpc {
+    pub client: Client,
+    pub address: String,
+    pub user: Option<String>,
+    pub password: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Forum {
@@ -52,9 +66,7 @@ pub struct Config {
     pub log_file: Option<String>,
     pub log_level: usize,
     pub real_kill: bool,
-    pub rpc_address: String,
-    pub rpc_user: Option<String>,
-    pub rpc_password: Option<String>,
+    pub rpc: Vec<Rpc>,
     pub user_id: Option<usize>,
     pub password: Option<String>,
     pub api_url: String,
@@ -69,9 +81,7 @@ impl Default for Config {
             log_file: None,
             log_level: 3,
             real_kill: false,
-            rpc_address: String::from("http://127.0.0.1:9091/transmission/rpc/"),
-            rpc_user: None,
-            rpc_password: None,
+            rpc: Vec::new(),
             user_id: None,
             password: None,
             api_url: String::from("https://api.t-ru.org/"),
@@ -92,6 +102,8 @@ impl Config {
         let mut file = File::open(file.into())?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
-        Ok(toml::from_slice(&buf)?)
+        let config = toml::from_slice(&buf)?;
+        debug!("Config::from_file::config: {:?}", config);
+        Ok(config)
     }
 }

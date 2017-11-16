@@ -2,10 +2,14 @@
 
 use std::collections::HashMap;
 use reqwest::{self, Client, IntoUrl, Url};
-use serde_json::Value;
+use serde_json::{self, Value};
 
-type PeerStats = (usize, usize, usize);
 pub type Result<T> = ::std::result::Result<T, Error>;
+pub type ForumName = HashMap<usize, Option<String>>;
+pub type UserName = HashMap<usize, Option<String>>;
+pub type PeerStats = HashMap<usize, Vec<usize>>;
+pub type TopicId = HashMap<String, Option<usize>>;
+pub type TopicData = HashMap<usize, Option<Data>>;
 
 quick_error! {
     #[derive(Debug)]
@@ -17,6 +21,12 @@ quick_error! {
             from()
         }
         Reqwest(err: ::reqwest::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        SerdeJson(err: serde_json::Error) {
             cause(err)
             description(err.description())
             display("{}", err)
@@ -39,7 +49,7 @@ struct Limit {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TopicData {
+pub struct Data {
     pub info_hash: String,
     pub forum_id: usize,
     pub poster_id: usize,
@@ -76,8 +86,8 @@ pub struct RutrackerApi {
 }
 
 macro_rules! dynamic {
-    ($name:ident, $arrayname:ident : $arraytype:ty, ($key:ty, $val:ty)) => {
-        pub fn $name(&self, $arrayname: &[$arraytype]) -> Result<HashMap<$key,Option<$val>>> {
+    ($name:ident, $arrayname:ident : $arraytype:ty, $type:ty) => {
+        pub fn $name(&self, $arrayname: &[$arraytype]) -> Result<$type> {
             let base_url = {
                 let mut url = self.url.join(concat!("v1/", stringify!($name)))?;
                 url.query_pairs_mut().append_pair("by", stringify!($arrayname));
@@ -90,10 +100,13 @@ macro_rules! dynamic {
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
                 trace!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);
-                let res = self.http_client.get(url)?.send()?.json::<Response<HashMap<$key,Option<$val>>>>()?;
+                let res = self.http_client.get(url)?.send()?.json::<Response<Value>>()?;
                 trace!(concat!("RutrackerApi::",stringify!($name),"::res: {:?}"), res);
                 match res.error {
-                    None => result.extend(res.result.into_iter()),
+                    None => {
+                        let res = serde_json::from_value::<$type>(res.result)?;
+                        result.extend(res.into_iter());
+                    },
                     Some(err) => return Err(Error::ApiError(stringify!($name), err)),
                 }
             }
@@ -107,11 +120,13 @@ impl RutrackerApi {
     pub fn new<S: IntoUrl>(url: S) -> Result<Self> {
         let url = url.into_url()?;
         debug!("RutrackerApi::new::url: {:?}", url);
-        Ok(RutrackerApi {
+        let api = RutrackerApi {
             limit: RutrackerApi::get_limit(&url)?,
             url: url,
             http_client: Client::new()?,
-        })
+        };
+        debug!("RutrackerApi::new::api: {:?}", api);
+        Ok(api)
     }
     /// Get limit of request.
     fn get_limit(url: &Url) -> Result<usize> {
@@ -123,25 +138,29 @@ impl RutrackerApi {
         }
     }
 
-    dynamic!(get_forum_name, forum_id: usize, (usize, String));
-    dynamic!(get_user_name, user_id: usize, (usize, String));
-    dynamic!(get_peer_stats, topic_id: usize, (String, PeerStats));
-    dynamic!(get_topic_id, hash: &str, (String, usize));
-    dynamic!(get_tor_topic_data, topic_id: usize, (usize, TopicData));
+    dynamic!(get_forum_name, forum_id: usize, ForumName);
+    dynamic!(get_user_name, user_id: usize, UserName);
+    dynamic!(get_peer_stats, topic_id: usize, PeerStats);
+    dynamic!(get_topic_id, hash: &str, TopicId);
+    dynamic!(get_tor_topic_data, topic_id: usize, TopicData);
 
     /// Get peer stats for all topics of the sub-forum
-    pub fn pvc(&self, forum_id: usize) -> Result<HashMap<String, Option<PeerStats>>> {
+    pub fn pvc(&self, forum_id: usize) -> Result<PeerStats> {
         let url = self.url
             .join("v1/static/pvc/f/")?
             .join(forum_id.to_string().as_str())?;
-        trace!("RutrackerApi:pvc:url {:?}", url);
+        trace!("RutrackerApi::pvc::url {:?}", url);
         let res = self.http_client
             .get(url)?
             .send()?
-            .json::<Response<HashMap<String, Option<PeerStats>>>>()?;
-        trace!("RutrackerApi:pvc:res {:?}", res);
+            .json::<Response<Value>>()?;
+        trace!("RutrackerApi::pvc::res {:?}", res);
         match res.error {
-            None => Ok(res.result),
+            None => {
+                let mut map: PeerStats = serde_json::from_value(res.result)?;
+                map.retain(|_, v| !v.is_empty());
+                Ok(map)
+            }
             Some(err) => Err(Error::ApiError("pvc", err)),
         }
     }

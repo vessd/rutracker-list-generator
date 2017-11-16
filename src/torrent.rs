@@ -1,5 +1,7 @@
 use rpc::{TorrentClient, TorrentStatus};
-use rutracker::api::{RutrackerApi, TopicData};
+use rutracker::api::{Data, PeerStats, RutrackerApi};
+use config::Forum;
+use std::collections::HashMap;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 
@@ -23,61 +25,170 @@ quick_error! {
 
 #[derive(Debug)]
 struct Torrent {
-    data: TopicData,
+    id: usize,
+    data: Data,
     status: TorrentStatus,
 }
 
 impl Torrent {
-    fn new(status: TorrentStatus, data: TopicData) -> Self {
-        Torrent { data, status }
+    fn new(id: usize, status: TorrentStatus, data: Data) -> Self {
+        Torrent { id, data, status }
     }
 }
 
 #[derive(Debug)]
-pub struct TorrentList {
+struct ClientList {
     list: Vec<Torrent>,
+    client: Box<TorrentClient>,
 }
 
-impl TorrentList {
-    pub fn new<C>(client: &mut C, api: &RutrackerApi) -> Result<Self>
-    where
-        C: TorrentClient,
-    {
-        let mut client_list = client.list()?;
-        trace!("TorrentList::new::client_list: {:?}", client_list);
-        let ids = api.get_topic_id(&client_list
-            .iter()
-            .map(|(hash, _)| hash.as_str())
-            .collect::<Vec<&str>>())?
+impl ClientList {
+    fn get_list_to_change(&self, peers: usize, topics: &mut PeerStats) -> Vec<String> {
+        let mut buf = Vec::new();
+        for t in &self.list {
+            if let Some(stats) = topics.remove(&t.id) {
+                if stats[0] >= peers && t.status != TorrentStatus::Other {
+                    buf.push(t.data.info_hash.clone());
+                }
+            }
+        }
+        buf
+    }
+
+    fn start(&mut self, hash: &[String]) {
+        if !hash.is_empty() {
+            let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
+            match self.client.start(&vec) {
+                Ok(()) => self.list.iter_mut().for_each(|t| {
+                    if hash.contains(&t.data.info_hash) {
+                        t.status = TorrentStatus::Seeding;
+                    }
+                }),
+                Err(err) => error!("{:?}", err),
+            }
+        }
+    }
+
+    fn stop(&mut self, hash: &[String]) {
+        if !hash.is_empty() {
+            let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
+            match self.client.stop(&vec) {
+                Ok(()) => self.list.iter_mut().for_each(|t| {
+                    if hash.contains(&t.data.info_hash) {
+                        t.status = TorrentStatus::Stopped;
+                    }
+                }),
+                Err(err) => error!("{:?}", err),
+            }
+        }
+    }
+
+    fn remove(&mut self, hash: &[String]) {
+        if !hash.is_empty() {
+            let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
+            match self.client.remove(&vec, false) {
+                Ok(()) => self.list.retain(|t| !hash.contains(&t.data.info_hash)),
+                Err(err) => error!("{:?}", err),
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TorrentList<'a> {
+    list: Vec<ClientList>,
+    api: &'a RutrackerApi,
+    ignored_ids: &'a [usize],
+}
+
+impl<'a> TorrentList<'a> {
+    pub fn new(api: &'a RutrackerApi, ignored_ids: &'a [usize]) -> Self {
+        let list = TorrentList {
+            list: Vec::new(),
+            api,
+            ignored_ids,
+        };
+        trace!("TorrentList::new::list: {:?}", list);
+        list
+    }
+    pub fn add_client(&mut self, mut client: Box<TorrentClient>) -> Result<()> {
+        let mut list = client.list()?;
+        trace!("TorrentList::new::list: {:?}", list);
+        let mut ids: HashMap<String, usize> = self.api
+            .get_topic_id(&list.iter()
+                .map(|(hash, _)| hash.as_str())
+                .collect::<Vec<&str>>())?
             .into_iter()
-            .filter_map(|(_, id)| id)
-            .collect::<Vec<usize>>();
+            .filter_map(|(hash, some)| {
+                if let Some(id) = some {
+                    Some((hash, id))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        ids.retain(|_, id| !self.ignored_ids.contains(id));
         trace!("TorrentList::new::ids: {:?}", ids);
-        let topics_data = api.get_tor_topic_data(&ids)?
+        let topics_data = self.api
+            .get_tor_topic_data(&ids.iter().map(|(_, &id)| id).collect::<Vec<usize>>())?
             .into_iter()
-            .filter_map(|(_, t)| t)
-            .collect::<Vec<TopicData>>();
+            .filter_map(|(_, d)| d)
+            .collect::<Vec<Data>>();
         trace!("TorrentList::new::topics_data: {:?}", topics_data);
-        Ok(TorrentList {
+        let client_list = ClientList {
             list: topics_data
                 .into_iter()
-                .filter(|data| data.tor_status == 2 || data.tor_status == 8)
                 .map(|data| {
-                    Torrent::new(client_list.remove(&data.info_hash).unwrap(), data)
+                    Torrent::new(
+                        ids.remove(&data.info_hash).unwrap(),
+                        list.remove(&data.info_hash).unwrap(),
+                        data,
+                    )
                 })
                 .collect(),
-        })
+            client,
+        };
+        trace!("TorrentList::add_client::client_list: {:?}", client_list);
+        if !list.is_empty() {
+            warn!("TorrentList::add_client::list не пуст, возможно это баг");
+            trace!("TorrentList::add_client::list: {:?}", list);
+        }
+        self.list.push(client_list);
+        Ok(())
     }
 
-    pub fn get(&self, status: TorrentStatus) -> Vec<&str> {
-        self.list
-            .iter()
-            .filter(|t| t.status == status)
-            .map(|t| t.data.info_hash.as_str())
-            .collect()
+    fn start(&mut self, topics: &mut PeerStats) {
+        let mut buf = Vec::new();
+        for client in &mut self.list {
+            for t in &client.list {
+                if topics.remove(&t.id).is_some() && t.status != TorrentStatus::Other {
+                    buf.push(t.data.info_hash.clone());
+                }
+            }
+            client.start(&buf);
+            buf.clear();
+        }
     }
 
-    pub fn remove_by_poster_id(&mut self, id: usize) {
-        self.list.retain(|t| t.data.poster_id != id);
+    fn stop(&mut self, peers: usize, topics: &mut PeerStats) {
+        for client in &mut self.list {
+            let vec = client.get_list_to_change(peers, topics);
+            client.stop(&vec)
+        }
+    }
+
+    fn remove(&mut self, peers: usize, topics: &mut PeerStats) {
+        for client in &mut self.list {
+            let vec = client.get_list_to_change(peers, topics);
+            client.remove(&vec)
+        }
+    }
+
+    pub fn exec(&mut self, real_kill: bool, forum: &Forum, topics: &mut PeerStats) {
+        if real_kill {
+            self.remove(forum.peers_for_kill, topics);
+        }
+        self.stop(forum.peers_for_stop, topics);
+        self.start(topics);
     }
 }
