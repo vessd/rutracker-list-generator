@@ -24,29 +24,28 @@ quick_error! {
 }
 
 #[derive(Debug)]
-struct Torrent {
-    id: usize,
+pub struct Torrent {
     data: Data,
     status: TorrentStatus,
 }
 
 impl Torrent {
-    fn new(id: usize, status: TorrentStatus, data: Data) -> Self {
-        Torrent { id, data, status }
+    fn new(status: TorrentStatus, data: Data) -> Self {
+        Torrent { data, status }
     }
 }
 
 #[derive(Debug)]
 struct ClientList {
-    list: Vec<Torrent>,
+    list: HashMap<usize, Torrent>,
     client: Box<TorrentClient>,
 }
 
 impl ClientList {
     fn get_list_to_change(&self, peers: usize, topics: &mut PeerStats) -> Vec<String> {
         let mut buf = Vec::new();
-        for t in &self.list {
-            if let Some(stats) = topics.remove(&t.id) {
+        for (id, t) in &self.list {
+            if let Some(stats) = topics.remove(id) {
                 if stats[0] >= peers && t.status != TorrentStatus::Other {
                     buf.push(t.data.info_hash.clone());
                 }
@@ -59,7 +58,7 @@ impl ClientList {
         if !hash.is_empty() {
             let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
             match self.client.start(&vec) {
-                Ok(()) => self.list.iter_mut().for_each(|t| {
+                Ok(()) => self.list.iter_mut().for_each(|(_, t)| {
                     if hash.contains(&t.data.info_hash) {
                         t.status = TorrentStatus::Seeding;
                     }
@@ -73,7 +72,7 @@ impl ClientList {
         if !hash.is_empty() {
             let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
             match self.client.stop(&vec) {
-                Ok(()) => self.list.iter_mut().for_each(|t| {
+                Ok(()) => self.list.iter_mut().for_each(|(_, t)| {
                     if hash.contains(&t.data.info_hash) {
                         t.status = TorrentStatus::Stopped;
                     }
@@ -87,7 +86,7 @@ impl ClientList {
         if !hash.is_empty() {
             let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
             match self.client.remove(&vec, false) {
-                Ok(()) => self.list.retain(|t| !hash.contains(&t.data.info_hash)),
+                Ok(()) => self.list.retain(|_, t| !hash.contains(&t.data.info_hash)),
                 Err(err) => error!("{:?}", err),
             }
         }
@@ -139,10 +138,9 @@ impl<'a> TorrentList<'a> {
             list: topics_data
                 .into_iter()
                 .map(|data| {
-                    Torrent::new(
+                    (
                         ids.remove(&data.info_hash).unwrap(),
-                        list.remove(&data.info_hash).unwrap(),
-                        data,
+                        Torrent::new(list.remove(&data.info_hash).unwrap(), data),
                     )
                 })
                 .collect(),
@@ -160,8 +158,8 @@ impl<'a> TorrentList<'a> {
     fn start(&mut self, topics: &mut PeerStats) {
         let mut buf = Vec::new();
         for client in &mut self.list {
-            for t in &client.list {
-                if topics.remove(&t.id).is_some() && t.status != TorrentStatus::Other {
+            for (id, t) in &client.list {
+                if topics.remove(id).is_some() && t.status != TorrentStatus::Other {
                     buf.push(t.data.info_hash.clone());
                 }
             }
@@ -184,11 +182,31 @@ impl<'a> TorrentList<'a> {
         }
     }
 
-    pub fn exec(&mut self, real_kill: bool, forum: &Forum, topics: &mut PeerStats) {
+    pub fn exec(&mut self, id: usize, real_kill: bool, forum: &Forum, topics: &mut PeerStats) -> HashMap<usize, Torrent> {
+        let mut map = HashMap::new();
+        topics.retain(|k, _| !self.ignored_ids.contains(k));
         if real_kill {
             self.remove(forum.peers_for_kill, topics);
         }
         self.stop(forum.peers_for_stop, topics);
         self.start(topics);
+        for client in &mut self.list {
+            let vec: Vec<usize> = client
+                .list
+                .iter()
+                .filter_map(|(&t_id, t)| {
+                    if t.data.forum_id == id {
+                        Some(t_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            map.extend(
+                vec.into_iter()
+                    .map(|id| (id, client.list.remove(&id).unwrap())),
+            );
+        }
+        map
     }
 }
