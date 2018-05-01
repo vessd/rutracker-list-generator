@@ -1,15 +1,17 @@
 //! A module to access Rutracker API
 
-use std::collections::HashMap;
 use reqwest::{self, Client, IntoUrl, Url};
 use serde_json::{self, Value};
+use std::borrow::Borrow;
+use std::collections::HashMap;
+use std::fmt::Display;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
-pub type ForumName = HashMap<usize, Option<String>>;
-pub type UserName = HashMap<usize, Option<String>>;
+pub type ForumName = HashMap<usize, String>;
+pub type UserName = HashMap<usize, String>;
 pub type PeerStats = HashMap<usize, Vec<usize>>;
-pub type TopicId = HashMap<String, Option<usize>>;
-pub type TopicData = HashMap<usize, Option<Data>>;
+pub type TopicId = HashMap<String, usize>;
+pub type TopicData = HashMap<usize, Data>;
 
 quick_error! {
     #[derive(Debug)]
@@ -87,7 +89,10 @@ pub struct RutrackerApi {
 
 macro_rules! dynamic {
     ($name:ident, $arrayname:ident : $arraytype:ty, $type:ty) => {
-        pub fn $name(&self, $arrayname: &[$arraytype]) -> Result<$type> {
+        pub fn $name<T>(&self, $arrayname: &[T]) -> Result<HashMap<$arraytype, $type>>
+        where
+            T: Borrow<$arraytype> + Display
+        {
             let base_url = {
                 let mut url = self.url.join(concat!("v1/", stringify!($name)))?;
                 url.query_pairs_mut().append_pair("by", stringify!($arrayname));
@@ -100,12 +105,12 @@ macro_rules! dynamic {
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
                 trace!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);
-                let res = self.http_client.get(url)?.send()?.json::<Response<Value>>()?;
+                let res = self.http_client.get(url).send()?.json::<Response<Value>>()?;
                 trace!(concat!("RutrackerApi::",stringify!($name),"::res: {:?}"), res);
                 match res.error {
                     None => {
-                        let res = serde_json::from_value::<$type>(res.result)?;
-                        result.extend(res.into_iter());
+                        let res: HashMap<$arraytype, Option<$type>> = serde_json::from_value(res.result)?;
+                        result.extend(res.into_iter().filter_map(|(k, v)| Some((k, v?))));
                     },
                     Some(err) => return Err(Error::ApiError(stringify!($name), err)),
                 }
@@ -122,12 +127,13 @@ impl RutrackerApi {
         debug!("RutrackerApi::new::url: {:?}", url);
         let api = RutrackerApi {
             limit: RutrackerApi::get_limit(&url)?,
-            url: url,
-            http_client: Client::new()?,
+            url,
+            http_client: Client::new(),
         };
         debug!("RutrackerApi::new::api: {:?}", api);
         Ok(api)
     }
+
     /// Get limit of request.
     fn get_limit(url: &Url) -> Result<usize> {
         let res = reqwest::get(url.join("v1/get_limit")?)?.json::<Response<Limit>>()?;
@@ -138,22 +144,17 @@ impl RutrackerApi {
         }
     }
 
-    dynamic!(get_forum_name, forum_id: usize, ForumName);
-    dynamic!(get_user_name, user_id: usize, UserName);
-    dynamic!(get_peer_stats, topic_id: usize, PeerStats);
-    dynamic!(get_topic_id, hash: &str, TopicId);
-    dynamic!(get_tor_topic_data, topic_id: usize, TopicData);
+    dynamic!(get_forum_name, forum_id: usize, String);
+    dynamic!(get_user_name, user_id: usize, String);
+    dynamic!(get_peer_stats, topic_id: usize, Vec<usize>);
+    dynamic!(get_topic_id, hash: String, usize);
+    dynamic!(get_tor_topic_data, topic_id: usize, Data);
 
     /// Get peer stats for all topics of the sub-forum
     pub fn pvc(&self, forum_id: usize) -> Result<PeerStats> {
-        let url = self.url
-            .join("v1/static/pvc/f/")?
-            .join(forum_id.to_string().as_str())?;
+        let url = self.url.join("v1/static/pvc/f/")?.join(forum_id.to_string().as_str())?;
         trace!("RutrackerApi::pvc::url {:?}", url);
-        let res = self.http_client
-            .get(url)?
-            .send()?
-            .json::<Response<Value>>()?;
+        let res = self.http_client.get(url).send()?.json::<Response<Value>>()?;
         trace!("RutrackerApi::pvc::res {:?}", res);
         match res.error {
             None => {

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use chrono::Local;
 use rutracker::api::Data;
+use std::collections::HashMap;
 use torrent::Torrent;
-use time;
 
 #[derive(Debug)]
 struct ForumData {
@@ -30,9 +30,10 @@ pub struct Report {
 
 impl Report {
     pub fn new() -> Self {
+        let date = Local::today();
         let report = Report {
             forum: HashMap::new(),
-            date: time::strftime("%d.%m.%Y", &time::now()).unwrap(),
+            date: date.format("%d.%m.%Y").to_string(),
         };
         debug!("Report::new::report: {:?}", report);
         report
@@ -40,7 +41,6 @@ impl Report {
 
     pub fn add_forum(&mut self, id: usize, name: String, list: HashMap<usize, Torrent>, topics: HashMap<usize, Data>) {
         let url = String::new(); //TODO
-        self.forum
-            .insert(id, ForumData::new(name, url, topics, list));
+        self.forum.insert(id, ForumData::new(name, url, topics, list));
     }
 }

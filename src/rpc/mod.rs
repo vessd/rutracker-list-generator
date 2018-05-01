@@ -3,8 +3,8 @@
 mod deluge;
 mod transmission;
 
-pub use self::transmission::Transmission;
 pub use self::deluge::Deluge;
+pub use self::transmission::Transmission;
 use std::collections::HashMap;
 use std::fmt::Debug;
 

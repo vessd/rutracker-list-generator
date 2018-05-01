@@ -1,7 +1,7 @@
 use std::default::Default;
-use std::path::PathBuf;
-use std::io::Read;
 use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
 use toml;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -71,6 +71,7 @@ pub struct Config {
     pub password: Option<String>,
     pub api_url: String,
     pub forum_url: String,
+    pub https_proxy: Option<String>,
 }
 
 impl Default for Config {
@@ -85,7 +86,8 @@ impl Default for Config {
             user_id: None,
             password: None,
             api_url: String::from("https://api.t-ru.org/"),
-            forum_url: String::from("https://rutracker.cr/forum/"),
+            forum_url: String::from("https://rutracker.org/forum/"),
+            https_proxy: None,
         }
     }
 }

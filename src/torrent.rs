@@ -1,6 +1,6 @@
+use config::Forum;
 use rpc::{TorrentClient, TorrentStatus};
 use rutracker::api::{Data, PeerStats, RutrackerApi};
-use config::Forum;
 use std::collections::HashMap;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -113,25 +113,13 @@ impl<'a> TorrentList<'a> {
     pub fn add_client(&mut self, mut client: Box<TorrentClient>) -> Result<()> {
         let mut list = client.list()?;
         trace!("TorrentList::new::list: {:?}", list);
-        let mut ids: HashMap<String, usize> = self.api
-            .get_topic_id(&list.iter()
-                .map(|(hash, _)| hash.as_str())
-                .collect::<Vec<&str>>())?
-            .into_iter()
-            .filter_map(|(hash, some)| {
-                if let Some(id) = some {
-                    Some((hash, id))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut ids = self.api.get_topic_id(&list.keys().collect::<Vec<&String>>())?;
         ids.retain(|_, id| !self.ignored_ids.contains(id));
         trace!("TorrentList::new::ids: {:?}", ids);
         let topics_data = self.api
-            .get_tor_topic_data(&ids.iter().map(|(_, &id)| id).collect::<Vec<usize>>())?
+            .get_tor_topic_data(&ids.values().collect::<Vec<&usize>>())?
             .into_iter()
-            .filter_map(|(_, d)| d)
+            .map(|(_, d)| d)
             .collect::<Vec<Data>>();
         trace!("TorrentList::new::topics_data: {:?}", topics_data);
         let client_list = ClientList {
@@ -194,18 +182,9 @@ impl<'a> TorrentList<'a> {
             let vec: Vec<usize> = client
                 .list
                 .iter()
-                .filter_map(|(&t_id, t)| {
-                    if t.data.forum_id == id {
-                        Some(t_id)
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|(&t_id, t)| if t.data.forum_id == id { Some(t_id) } else { None })
                 .collect();
-            map.extend(
-                vec.into_iter()
-                    .map(|id| (id, client.list.remove(&id).unwrap())),
-            );
+            map.extend(vec.into_iter().map(|id| (id, client.list.remove(&id).unwrap())));
         }
         map
     }

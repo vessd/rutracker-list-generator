@@ -1,11 +1,14 @@
 #![allow(dead_code)]
-#![allow(cyclomatic_complexity)]
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
+#![allow(cyclomatic_complexity)]
 
+extern crate encoding;
 // https://github.com/seanmonstar/reqwest/issues/11
 #[macro_use]
 extern crate hyper;
+extern crate kuchiki;
+extern crate lmdb_rs as lmdb;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -17,48 +20,53 @@ extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
 extern crate simplelog;
-extern crate time;
+#[macro_use]
+extern crate text_io;
+// https://github.com/seanmonstar/reqwest/issues/14
+extern crate chrono;
+extern crate cookie;
 extern crate toml;
-extern crate unqlite;
 
+mod config;
+mod report;
 mod rpc;
 mod rutracker;
 mod torrent;
-mod config;
-mod report;
 
-use rutracker::RutrackerApi;
-use torrent::TorrentList;
 use config::{Client, Config};
-use std::fs::File;
-use std::env;
+use lmdb::{DbFlags, EnvBuilder};
+use rutracker::{RutrackerApi, RutrackerForum};
 use std::collections::HashMap;
+use std::env;
+use std::fs::File;
+use torrent::TorrentList;
 // https://github.com/Drakulix/simplelog.rs/issues/3
-use simplelog::{LogLevel, LogLevelFilter, SimpleLogger, TermLogger, WriteLogger};
+use simplelog::{Level, LevelFilter, SimpleLogger, TermLogger, WriteLogger};
 
 fn init_log(log_level: usize, log_file: &Option<String>) {
     let log_level = match log_level {
-        0 => LogLevelFilter::Off,
-        1 => LogLevelFilter::Error,
-        2 => LogLevelFilter::Warn,
-        3 => LogLevelFilter::Info,
-        4 => LogLevelFilter::Debug,
-        _ => LogLevelFilter::Trace,
+        0 => LevelFilter::Off,
+        1 => LevelFilter::Error,
+        2 => LevelFilter::Warn,
+        3 => LevelFilter::Info,
+        4 => LevelFilter::Debug,
+        _ => LevelFilter::Trace,
     };
     let log_config = simplelog::Config {
-        time: Some(LogLevel::Error),
-        level: Some(LogLevel::Error),
-        target: Some(LogLevel::Error),
-        location: Some(LogLevel::Debug),
+        time: Some(Level::Error),
+        level: Some(Level::Error),
+        target: Some(Level::Error),
+        location: Some(Level::Debug),
+        time_format: Some("%T"),
     };
     if let Some(ref file) = *log_file {
         match File::create(file) {
             Ok(f) => match WriteLogger::init(log_level, log_config, f) {
                 Ok(()) => (),
                 Err(e) => {
-                    match TermLogger::init(LogLevelFilter::Error, log_config) {
+                    match TermLogger::init(LevelFilter::Error, log_config) {
                         Ok(()) => (),
-                        Err(e) => if SimpleLogger::init(LogLevelFilter::Error, log_config).is_err() {
+                        Err(e) => if SimpleLogger::init(LevelFilter::Error, log_config).is_err() {
                             println!("couldn't init any logger");
                         } else {
                             error!("{}", e);
@@ -68,9 +76,9 @@ fn init_log(log_level: usize, log_file: &Option<String>) {
                 }
             },
             Err(e) => {
-                match TermLogger::init(LogLevelFilter::Error, log_config) {
+                match TermLogger::init(LevelFilter::Error, log_config) {
                     Ok(()) => (),
-                    Err(e) => if SimpleLogger::init(LogLevelFilter::Error, log_config).is_err() {
+                    Err(e) => if SimpleLogger::init(LevelFilter::Error, log_config).is_err() {
                         println!("couldn't init any logger");
                     } else {
                         error!("{}", e);
@@ -82,7 +90,7 @@ fn init_log(log_level: usize, log_file: &Option<String>) {
     } else {
         match TermLogger::init(log_level, log_config) {
             Ok(()) => (),
-            Err(e) => if SimpleLogger::init(LogLevelFilter::Error, log_config).is_err() {
+            Err(e) => if SimpleLogger::init(LevelFilter::Error, log_config).is_err() {
                 println!("couldn't init any logger");
             } else {
                 error!("{}", e);
@@ -92,6 +100,32 @@ fn init_log(log_level: usize, log_file: &Option<String>) {
 }
 
 fn main() {
+    /* let env = EnvBuilder::new().open("data", 0o755).unwrap();
+
+    let db_handle = env.get_default_db(DbFlags::empty()).unwrap();
+    let txn = env.new_transaction().unwrap();
+    {
+        let db = txn.bind(&db_handle); // get a database bound to this transaction
+
+        let pairs = vec![("Albert", "Einstein"), ("Joe", "Smith"), ("Jack", "Daniels")];
+
+        for &(name, surname) in &pairs {
+            db.set(&surname, &name).unwrap();
+        }
+    }
+
+    // Note: `commit` is choosen to be explicit as
+    // in case of failure it is responsibility of
+    // the client to handle the error
+    match txn.commit() {
+        Err(_) => panic!("failed to commit!"),
+        Ok(_) => (),
+    }
+
+    let reader = env.get_reader().unwrap();
+    let db = reader.bind(&db_handle);
+    let name = db.get::<&str>(&"Smith").unwrap();
+    println!("It's {} Smith", name); */
     let config = if let Some(f) = env::args().nth(1) {
         f
     } else {
@@ -113,7 +147,19 @@ fn main() {
             std::process::exit(1)
         }
     };
-    let mut list = TorrentList::new(&api, &config.ignored_ids);
+    if let Some(user_id) = config.user_id {
+        if let Some(pass) = config.password.clone() {
+            info!("Получаем имя пользователя...");
+            let user = api.get_user_name(&[user_id]).unwrap().remove(&user_id).unwrap();
+            info!("Соединяемся с форумом...");
+            let _forum = RutrackerForum::new(&user, &pass, &config).unwrap();
+            //let topic = forum.get_topic(3186974).unwrap();
+            //println!("{:?}", topic.get_stored_torrents());
+            //forum.reply_topic(5494807, "test").unwrap();
+            //let _line: String = read!("{}\n");
+        }
+    }
+    /*  let mut list = TorrentList::new(&api, &config.ignored_ids);
     info!("Запрос списка имеющихся раздач...");
     for r in &config.rpc {
         trace!("config.rpc: {:?}", r);
@@ -179,5 +225,5 @@ fn main() {
             };
             report.add_forum(*id, forum_name.remove(id).unwrap(), forum_list, topics_data);
         }
-    }
+    } */
 }
