@@ -24,33 +24,39 @@ quick_error! {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct User {
+    pub name: String,
+    pub password: String,
+}
+
 #[derive(Debug, Deserialize, Clone, Copy)]
-pub enum Client {
+pub enum ClientName {
     Deluge,
     Transmission,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Rpc {
-    pub client: Client,
+#[derive(Debug, Deserialize, Clone)]
+pub struct Client {
+    pub client: ClientName,
     pub address: String,
     pub user: Option<String>,
     pub password: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
-pub struct Forum {
-    pub forum_ids: Vec<usize>,
+pub struct ForumConfig {
+    pub ids: Vec<usize>,
     pub peers_for_download: usize,
     pub peers_for_kill: usize,
     pub peers_for_stop: usize,
 }
 
-impl Default for Forum {
-    fn default() -> Forum {
-        Forum {
-            forum_ids: Vec::new(),
+impl Default for ForumConfig {
+    fn default() -> ForumConfig {
+        ForumConfig {
+            ids: Vec::new(),
             peers_for_download: 3,
             peers_for_kill: 10,
             peers_for_stop: 5,
@@ -61,17 +67,16 @@ impl Default for Forum {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    pub forum: Vec<Forum>,
+    pub forum: Vec<ForumConfig>,
     pub ignored_ids: Vec<usize>,
     pub log_file: Option<String>,
     pub log_level: usize,
     pub real_kill: bool,
-    pub rpc: Vec<Rpc>,
-    pub user_id: Option<usize>,
-    pub password: Option<String>,
+    pub client: Vec<Client>,
+    pub user: Option<User>,
     pub api_url: String,
     pub forum_url: String,
-    pub https_proxy: Option<String>,
+    pub proxy: Option<String>,
 }
 
 impl Default for Config {
@@ -82,12 +87,11 @@ impl Default for Config {
             log_file: None,
             log_level: 3,
             real_kill: false,
-            rpc: Vec::new(),
-            user_id: None,
-            password: None,
+            client: Vec::new(),
+            user: None,
             api_url: String::from("https://api.t-ru.org/"),
             forum_url: String::from("https://rutracker.org/forum/"),
-            https_proxy: None,
+            proxy: None,
         }
     }
 }

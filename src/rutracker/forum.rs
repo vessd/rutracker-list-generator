@@ -18,6 +18,12 @@ const MESSAGE_LEN: usize = 120_000;
 quick_error! {
     #[derive(Debug)]
     pub enum Error {
+        Api(err: super::api::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
         Cookie {
             description("cann't get cookie")
             display("cann't get cookie from Rutracker forum")
@@ -25,6 +31,29 @@ quick_error! {
         Token {
             description("cann't get token")
             display("cann't get token from Rutracker forum")
+        }
+        Message {
+            description("message length exceeded")
+            display("message length exceeded")
+        }
+        Keys {
+            description("keys not found")
+            display("keys not found")
+        }
+        User
+        Parse(err: ::std::num::ParseIntError) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        Unexpected {
+            description("unexpected error")
+            display("unexpected error")
+        }
+        UnexpectedResponse(status: StatusCode) {
+            description("unexpected response")
+            display("unexpected response from the rutracker forum: {}", status)
         }
         Reqwest(err: ::reqwest::Error) {
             cause(err)
@@ -42,14 +71,105 @@ quick_error! {
             description("decoder error")
             display("{}", s)
         }
-        Message {
-            description("message length exceeded")
-            display("message length exceeded")
+    }
+}
+
+#[derive(Debug)]
+pub struct User {
+    pub id: usize,
+    pub name: String,
+    pub bt: String,
+    pub api: String,
+    pub cookie: Cookie,
+    pub form_token: String,
+}
+
+impl User {
+    pub fn new(config: &Config) -> Result<Self> {
+        if let Some(ref user) = config.user {
+            let url = config.forum_url.as_ref();
+            let client = if let Some(p) = config.proxy.as_ref() {
+                ClientBuilder::new()
+                    .proxy(Proxy::all(p)?)
+                    .redirect(RedirectPolicy::none())
+                    .build()?
+            } else {
+                ClientBuilder::new()
+                    .redirect(RedirectPolicy::none())
+                    .build()?
+            };
+            let name = user.name.clone();
+            let cookie = User::get_cookie(&user.name, &user.password, url, &client)?;
+            let page = client
+                .get((url.to_owned() + "profile.php").as_str())
+                .header(cookie.clone())
+                .query(&[("mode", "viewprofile"), ("u", &user.name)])
+                .send()?
+                .text()?;
+            let (bt, api, id) = User::get_keys(&page).ok_or(Error::Keys)?;
+            let form_token = User::get_form_token(&page).ok_or(Error::Token)?;
+            Ok(User {
+                id,
+                name,
+                bt,
+                api,
+                cookie,
+                form_token,
+            })
+        } else {
+            Err(Error::User)
         }
-        UnexpectedResponse(status: StatusCode) {
-            description("unexpected response")
-            display("unexpected response from the transmission server: {}", status)
-        }
+    }
+
+    // https://github.com/seanmonstar/reqwest/issues/14
+    fn get_cookie(user: &str, pass: &str, url: &str, client: &Client) -> Result<Cookie> {
+        let resp = client
+            .post((url.to_owned() + "login.php").as_str())
+            .form(&[
+                ("login_username", user),
+                ("login_password", pass),
+                ("login", "Вход"),
+            ])
+            .send()?;
+
+        let mut cookie = Cookie::new();
+        resp.headers()
+            .get::<SetCookie>()
+            .ok_or(Error::Cookie)?
+            .iter()
+            .for_each(|c| {
+                let co = cookie::Cookie::parse(c.as_str()).unwrap();
+                cookie.append(co.name().to_owned(), co.value().to_owned());
+            });
+        Ok(cookie)
+    }
+
+    fn get_keys(page: &str) -> Option<(String, String, usize)> {
+        let document = kuchiki::parse_html().one(page);
+        let keys: Vec<String> = document
+            .select(".med")
+            .expect("select keys")
+            .map(|node| node.text_contents())
+            .find(|s| s.starts_with("bt: "))?
+            .split_whitespace()
+            .filter(|s| !s.ends_with(':'))
+            .map(str::to_owned)
+            .collect();
+        Some((
+            keys.get(0)?.clone(),
+            keys.get(1)?.clone(),
+            keys.get(2)?.parse().ok()?,
+        ))
+    }
+
+    fn get_form_token(page: &str) -> Option<String> {
+        Some(
+            page.lines()
+                .find(|l| l.contains("form_token"))?
+                .split_terminator('\'')
+                .nth(1)?
+                .to_owned(),
+        )
     }
 }
 
@@ -72,7 +192,13 @@ impl Post {
     }
 
     fn get_author(node: &NodeRef) -> Option<String> {
-        Some(node.select_first(".nick").ok()?.text_contents().trim().to_string())
+        Some(
+            node.select_first(".nick")
+                .ok()?
+                .text_contents()
+                .trim()
+                .to_string(),
+        )
     }
 
     fn get_t_ids(&self) -> Vec<usize> {
@@ -120,71 +246,37 @@ impl Topic {
 }
 
 #[derive(Debug)]
+pub struct Forum<'a> {
+    pub id: usize,
+    pub name: String,
+    rutracker: &'a RutrackerForum,
+}
+
+#[derive(Debug)]
 pub struct RutrackerForum {
     client: Client,
-    base_url: String,
-    form_token: String,
+    url: String,
+    user: User,
 }
 
 impl RutrackerForum {
-    pub fn new(user: &str, password: &str, config: &Config) -> Result<Self> {
-        let base_url = config.forum_url.clone();
-        let proxy = config.https_proxy.as_ref();
-        let headers = RutrackerForum::get_headers(user, password, &base_url, proxy)?;
-        println!("{}", headers);
-        let client = if let Some(p) = proxy {
-            ClientBuilder::new().proxy(Proxy::all(p)?).default_headers(headers).build()?
-        } else {
-            ClientBuilder::new().default_headers(headers).build()?
-        };
-        let form_token = RutrackerForum::get_form_token(base_url.clone(), &client)?;
-        Ok(RutrackerForum {
-            client,
-            base_url,
-            form_token,
-        })
-    }
-
-    // https://github.com/seanmonstar/reqwest/issues/14
-    fn get_headers(user: &str, password: &str, base_url: &str, proxy: Option<&String>) -> Result<Headers> {
+    pub fn new(user: User, config: &Config) -> Result<Self> {
+        let url = config.forum_url.clone();
+        let proxy = config.proxy.as_ref();
+        let mut headers = Headers::new();
+        headers.set(user.cookie.clone());
         let client = if let Some(p) = proxy {
             ClientBuilder::new()
                 .proxy(Proxy::all(p)?)
-                .redirect(RedirectPolicy::none())
+                .default_headers(headers)
                 .build()?
         } else {
-            ClientBuilder::new().redirect(RedirectPolicy::none()).build()?
+            ClientBuilder::new().default_headers(headers).build()?
         };
-        let resp = client
-            .post((base_url.to_owned() + "login.php").as_str())
-            .form(&[("login_username", user), ("login_password", password), ("login", "")])
-            .send()?;
-
-        let mut cookie = Cookie::new();
-        resp.headers().get::<SetCookie>().ok_or(Error::Cookie)?.iter().for_each(|c| {
-            let co = cookie::Cookie::parse(c.as_str()).unwrap();
-            cookie.append(co.name().to_owned(), co.value().to_owned());
-        });
-        let mut headers = Headers::new();
-        headers.set(cookie);
-        Ok(headers)
+        Ok(RutrackerForum { client, url, user })
     }
 
-    fn get_form_token(base_url: String, client: &Client) -> Result<String> {
-        let resp = client.get((base_url + "index.php").as_str()).send()?.text()?;
-        Ok(resp.lines()
-            .find(|l| l.contains("form_token"))
-            .ok_or(Error::Token)?
-            .split_terminator('\'')
-            .nth(1)
-            .ok_or(Error::Token)?
-            .to_owned())
-    }
-
-    fn decode<R>(source: &mut R) -> Result<String>
-    where
-        R: Read,
-    {
+    fn decode<R: Read>(source: &mut R) -> Result<String> {
         let mut buf = Vec::new();
         source.read_to_end(&mut buf)?;
         match WINDOWS_1251.decode(&buf, DecoderTrap::Replace) {
@@ -214,7 +306,7 @@ impl RutrackerForum {
                     if let Some(element) = pg.as_node().as_element() {
                         if let Some(href) = element.attributes.borrow().get("href") {
                             url = href.to_owned();
-                            url.insert_str(0, self.base_url.as_str());
+                            url.insert_str(0, self.url.as_str());
                             continue;
                         }
                     }
@@ -228,7 +320,7 @@ impl RutrackerForum {
     pub fn get_topic(&self, id: usize) -> Result<Topic> {
         let mut url = id.to_string();
         url.insert_str(0, "viewtopic.php?t=");
-        url.insert_str(0, self.base_url.as_str());
+        url.insert_str(0, self.url.as_str());
         let posts = self.get_posts(url)?;
         Ok(Topic { posts })
     }
@@ -239,8 +331,9 @@ impl RutrackerForum {
         }
         let mut url = id.to_string();
         url.insert_str(0, "posting.php?mode=reply&t=");
-        url.insert_str(0, self.base_url.as_str());
-        let reply = self.client
+        url.insert_str(0, self.url.as_str());
+        let reply = self
+            .client
             .post(url.as_str())
             .form(&[
                 ("mode", "reply"),
@@ -252,7 +345,7 @@ impl RutrackerForum {
                 ("codeUrl2", ""),
                 ("message", message),
                 ("submit_mode", "submit"),
-                ("form_token", self.form_token.as_str()),
+                ("form_token", self.user.form_token.as_str()),
             ])
             .send()?;
         match reply.status() {
@@ -267,8 +360,9 @@ impl RutrackerForum {
         }
         let mut url = p_id.to_string();
         url.insert_str(0, "posting.php?mode=editpost&p=");
-        url.insert_str(0, self.base_url.as_str());
-        let reply = self.client
+        url.insert_str(0, self.url.as_str());
+        let reply = self
+            .client
             .post(url.as_str())
             .form(&[
                 ("mode", "editpost"),
@@ -284,7 +378,7 @@ impl RutrackerForum {
                 ("submit_mode", "submit"),
                 ("decflag", "2"),
                 ("update_post_time", "on"),
-                ("form_token", self.form_token.as_str()),
+                ("form_token", self.user.form_token.as_str()),
             ])
             .send()?;
         match reply.status() {
@@ -292,4 +386,6 @@ impl RutrackerForum {
             _ => Err(Error::UnexpectedResponse(reply.status())),
         }
     }
+
+    //pub fn get_forum(&self, id: usize, name: String) -> Result<Forum> {}
 }

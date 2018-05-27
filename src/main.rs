@@ -1,6 +1,6 @@
 #![allow(dead_code)]
-#![cfg_attr(feature = "clippy", feature(plugin))]
-#![cfg_attr(feature = "clippy", plugin(clippy))]
+#![feature(plugin)]
+#![plugin(clippy)]
 #![allow(cyclomatic_complexity)]
 
 extern crate encoding;
@@ -8,7 +8,7 @@ extern crate encoding;
 #[macro_use]
 extern crate hyper;
 extern crate kuchiki;
-extern crate lmdb_rs as lmdb;
+extern crate lmdb;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -22,28 +22,28 @@ extern crate serde_json;
 extern crate simplelog;
 #[macro_use]
 extern crate text_io;
-// https://github.com/seanmonstar/reqwest/issues/14
+extern crate bincode;
 extern crate chrono;
+// https://github.com/seanmonstar/reqwest/issues/14
 extern crate cookie;
 extern crate toml;
 
+mod client;
 mod config;
+mod control;
+mod database;
 mod report;
-mod rpc;
 mod rutracker;
-mod torrent;
 
-use config::{Client, Config};
-use lmdb::{DbFlags, EnvBuilder};
+use config::{ClientName, Config};
+use control::Control;
 use rutracker::{RutrackerApi, RutrackerForum};
 use std::collections::HashMap;
-use std::env;
 use std::fs::File;
-use torrent::TorrentList;
 // https://github.com/Drakulix/simplelog.rs/issues/3
 use simplelog::{Level, LevelFilter, SimpleLogger, TermLogger, WriteLogger};
 
-fn init_log(log_level: usize, log_file: &Option<String>) {
+fn init_log(log_level: usize, log_file: Option<&String>) {
     let log_level = match log_level {
         0 => LevelFilter::Off,
         1 => LevelFilter::Error,
@@ -59,7 +59,7 @@ fn init_log(log_level: usize, log_file: &Option<String>) {
         location: Some(Level::Debug),
         time_format: Some("%T"),
     };
-    if let Some(ref file) = *log_file {
+    if let Some(file) = log_file {
         match File::create(file) {
             Ok(f) => match WriteLogger::init(log_level, log_config, f) {
                 Ok(()) => (),
@@ -99,85 +99,29 @@ fn init_log(log_level: usize, log_file: &Option<String>) {
     }
 }
 
-fn main() {
-    /* let env = EnvBuilder::new().open("data", 0o755).unwrap();
+fn main() -> Result<(), Box<std::error::Error>> {
+    let config = Config::from_file("rlg.toml")?;
+    init_log(config.log_level, config.log_file.as_ref());
+    let database = database::Database::new()?;
 
-    let db_handle = env.get_default_db(DbFlags::empty()).unwrap();
-    let txn = env.new_transaction().unwrap();
-    {
-        let db = txn.bind(&db_handle); // get a database bound to this transaction
-
-        let pairs = vec![("Albert", "Einstein"), ("Joe", "Smith"), ("Jack", "Daniels")];
-
-        for &(name, surname) in &pairs {
-            db.set(&surname, &name).unwrap();
-        }
-    }
-
-    // Note: `commit` is choosen to be explicit as
-    // in case of failure it is responsibility of
-    // the client to handle the error
-    match txn.commit() {
-        Err(_) => panic!("failed to commit!"),
-        Ok(_) => (),
-    }
-
-    let reader = env.get_reader().unwrap();
-    let db = reader.bind(&db_handle);
-    let name = db.get::<&str>(&"Smith").unwrap();
-    println!("It's {} Smith", name); */
-    let config = if let Some(f) = env::args().nth(1) {
-        f
-    } else {
-        String::from("rlg.toml")
-    };
-    let config = match Config::from_file(&config) {
-        Ok(conf) => conf,
-        Err(err) => {
-            println!("[ERROR] {}: {}", config, err);
-            std::process::exit(1)
-        }
-    };
-    init_log(config.log_level, &config.log_file);
     info!("Соединение с Rutracker API...");
-    let api = match RutrackerApi::new(config.api_url.as_str()) {
-        Ok(api) => api,
-        Err(err) => {
-            error!("{}", err);
-            std::process::exit(1)
-        }
-    };
-    if let Some(user_id) = config.user_id {
-        if let Some(pass) = config.password.clone() {
-            info!("Получаем имя пользователя...");
-            let user = api.get_user_name(&[user_id]).unwrap().remove(&user_id).unwrap();
-            info!("Соединяемся с форумом...");
-            let _forum = RutrackerForum::new(&user, &pass, &config).unwrap();
-            //let topic = forum.get_topic(3186974).unwrap();
-            //println!("{:?}", topic.get_stored_torrents());
-            //forum.reply_topic(5494807, "test").unwrap();
-            //let _line: String = read!("{}\n");
-        }
-    }
-    /*  let mut list = TorrentList::new(&api, &config.ignored_ids);
+    let api = RutrackerApi::new(config.api_url.as_str(), &database)?;
+    let topics_info = api.pvc(7)?;
+    println!("{:?}", topics_info);
+
+    let mut control = Control::new(&api);
     info!("Запрос списка имеющихся раздач...");
-    for r in &config.rpc {
-        trace!("config.rpc: {:?}", r);
+    for r in &config.client {
+        trace!("config.client: {:?}", r);
         match r.client {
-            Client::Deluge => match list.add_client(Box::new(rpc::Deluge::new())) {
-                Ok(()) => (),
-                Err(err) => error!("{}", err),
-            },
-            Client::Transmission => match rpc::Transmission::new(r.address.as_str(), None) {
-                Ok(client) => match list.add_client(Box::new(client)) {
-                    Ok(()) => (),
-                    Err(err) => error!("{}", err),
-                },
-                Err(err) => error!("{}", err),
-            },
+            ClientName::Deluge => control.add_client(Box::new(client::Deluge::new()))?,
+            ClientName::Transmission => control.add_client(Box::new(client::Transmission::new(
+                r.address.as_str(),
+                None,
+            )?))?,
         }
     }
-    trace!("list: {:?}", list);
+    /*trace!("list: {:?}", list);
     let mut report = report::Report::new();
     for f in &config.forum {
         let mut forum_name = match api.get_forum_name(&f.forum_ids) {
@@ -226,4 +170,5 @@ fn main() {
             report.add_forum(*id, forum_name.remove(id).unwrap(), forum_list, topics_data);
         }
     } */
+    Ok(())
 }

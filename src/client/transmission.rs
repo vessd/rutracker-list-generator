@@ -1,6 +1,4 @@
 //! A minimal implementation of rpc client for Tranmission.
-mod torrent;
-
 use reqwest::{self, Client, IntoUrl, StatusCode, Url};
 use serde_json::Value;
 use std::{fmt, result};
@@ -46,20 +44,20 @@ quick_error!{
 
 /// A enum that represents the "ids" field in request body.
 #[derive(Debug, Clone, Copy)]
-enum TorrentSelect<'a> {
+pub enum TorrentSelect<'a> {
     Ids(&'a [&'a str]),
     All,
 }
 
 /// A struct that represents the "delete-local-data" field in request body.
 #[derive(Debug, Clone, Copy, Serialize)]
-struct DeleteLocalData(bool);
+pub struct DeleteLocalData(pub bool);
 
 /// A structure that represents fields for torrent-get request.
 ///
 /// It provides only the minimum required fields.
 #[derive(Debug, Clone, Copy, Serialize)]
-enum ArgGet {
+pub enum ArgGet {
     #[serde(rename = "hashString")]
     HashString,
     #[serde(rename = "status")]
@@ -70,7 +68,7 @@ enum ArgGet {
 macro_rules! enum_number_de {
     ($name:ident { $($variant:ident = $value:expr, )* }) => {
         #[derive(Debug, Clone, Copy)]
-        enum $name {
+        pub enum $name {
             $($variant = $value,)*
         }
 
@@ -119,10 +117,10 @@ enum_number_de!(TorrentStatus {
 ///
 /// It provides only the minimum required fields.
 #[derive(Debug, Clone, Deserialize)]
-struct ResponseGet {
+pub struct ResponseGet {
     #[serde(rename = "hashString")]
-    hash: String,
-    status: TorrentStatus,
+    pub hash: String,
+    pub status: TorrentStatus,
 }
 
 /// A struct that represents a "arguments" object in response body.
@@ -134,7 +132,7 @@ struct ResponseArgument {
 
 /// A enum that represents a response status.
 #[derive(Debug, Clone, Deserialize)]
-enum ResponseStatus {
+pub enum ResponseStatus {
     #[serde(rename = "success")]
     Success,
     Error(String),
@@ -176,7 +174,7 @@ macro_rules! requ_json {
 
 macro_rules! empty_response {
     ($name:ident, $method:tt $(,$argname:ident : $argtype:ident : $argstring:tt)*) => {
-        fn $name(&mut self, t: TorrentSelect $(,$argname:$argtype)*) -> Result<()> {
+        pub fn $name(&mut self, t: TorrentSelect $(,$argname:$argtype)*) -> Result<()> {
             match self.request(&requ_json!(t,$method $(,$argstring:$argname)*))?.json::<Response>()?.result {
                 ResponseStatus::Success => Ok(()),
                 ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),
@@ -216,7 +214,8 @@ impl Transmission {
     /// If the response status is 409, then try again with a new SID.
     /// Otherwise return an error.
     fn request(&mut self, json: &Value) -> Result<reqwest::Response> {
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.url.clone())
             .json(json)
             .header(self.sid.clone())
@@ -225,7 +224,11 @@ impl Transmission {
         match resp.status() {
             StatusCode::Ok => Ok(resp),
             StatusCode::Conflict => {
-                self.sid = resp.headers().get::<SessionId>().ok_or(Error::ParseIdError)?.clone();
+                self.sid = resp
+                    .headers()
+                    .get::<SessionId>()
+                    .ok_or(Error::ParseIdError)?
+                    .clone();
                 self.request(json)
             }
             _ => Err(Error::UnexpectedResponse(resp.status())),
@@ -242,8 +245,10 @@ impl Transmission {
     empty_response!(remove, "torrent-remove", d:DeleteLocalData:"delete-local-data");
 
     /// Get a list of torrents from the Transmission.
-    fn get(&mut self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
-        let responce = self.request(&requ_json!(t, "torrent-get", "fields": f))?.json::<Response>()?;
+    pub fn get(&mut self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
+        let responce = self
+            .request(&requ_json!(t, "torrent-get", "fields": f))?
+            .json::<Response>()?;
         trace!("Transmission::get::responce: {:?}", responce);
         match responce.result {
             ResponseStatus::Success => Ok(responce.arguments.torrents),

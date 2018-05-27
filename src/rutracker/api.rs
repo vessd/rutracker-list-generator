@@ -1,5 +1,6 @@
 //! A module to access Rutracker API
 
+use database::{self, Database, DatabaseName};
 use reqwest::{self, Client, IntoUrl, Url};
 use serde_json::{self, Value};
 use std::borrow::Borrow;
@@ -7,11 +8,6 @@ use std::collections::HashMap;
 use std::fmt::Display;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
-pub type ForumName = HashMap<usize, String>;
-pub type UserName = HashMap<usize, String>;
-pub type PeerStats = HashMap<usize, Vec<usize>>;
-pub type TopicId = HashMap<String, usize>;
-pub type TopicData = HashMap<usize, Data>;
 
 quick_error! {
     #[derive(Debug)]
@@ -41,6 +37,12 @@ quick_error! {
                 err.code,
                 err.text)
         }
+        Database (err: database::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
     }
 }
 
@@ -50,8 +52,8 @@ struct Limit {
     limit: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Data {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TopicData {
     pub info_hash: String,
     pub forum_id: usize,
     pub poster_id: usize,
@@ -64,6 +66,36 @@ pub struct Data {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct TopicInfo {
+    pub tor_status: usize,
+    pub seeders: usize,
+    pub reg_time: usize,
+}
+
+struct OptionInfo(Option<TopicInfo>);
+
+impl<'de> ::serde::Deserialize<'de> for OptionInfo {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::serde::Deserialize::deserialize(deserializer).map(|info: Vec<usize>| {
+            if info.len() == 3 {
+                unsafe {
+                    OptionInfo(Some(TopicInfo {
+                        tor_status: *info.get_unchecked(0),
+                        seeders: *info.get_unchecked(1),
+                        reg_time: *info.get_unchecked(2),
+                    }))
+                }
+            } else {
+                OptionInfo(None)
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ResponseError {
     pub code: u16,
     pub text: String,
@@ -72,24 +104,29 @@ pub struct ResponseError {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Response<T: Default> {
-    format: Value,
+    #[serde(skip)]
+    format: (),
     result: T,
-    total_size_bytes: Value,
-    update_time: Value,
-    update_time_humn: Value,
+    #[serde(skip)]
+    total_size_bytes: (),
+    #[serde(skip)]
+    update_time: (),
+    #[serde(skip)]
+    update_time_humn: (),
     error: Option<ResponseError>,
 }
 
 #[derive(Debug)]
-pub struct RutrackerApi {
+pub struct RutrackerApi<'a> {
     url: Url,
     http_client: Client,
     limit: usize,
+    db: &'a Database,
 }
 
 macro_rules! dynamic {
     ($name:ident, $arrayname:ident : $arraytype:ty, $type:ty) => {
-        pub fn $name<T>(&self, $arrayname: &[T]) -> Result<HashMap<$arraytype, $type>>
+        pub fn $name<T>(&self, $arrayname: &[T], db_name: Option<DatabaseName>) -> Result<HashMap<$arraytype, $type>>
         where
             T: Borrow<$arraytype> + Display
         {
@@ -110,7 +147,12 @@ macro_rules! dynamic {
                 match res.error {
                     None => {
                         let res: HashMap<$arraytype, Option<$type>> = serde_json::from_value(res.result)?;
-                        result.extend(res.into_iter().filter_map(|(k, v)| Some((k, v?))));
+                        let res = res.into_iter().filter_map(|(k, v)| Some((k, v?))).collect();
+                        if let Some(name) = db_name {
+                            self.db.put(name, &res)?;
+                        } else {
+                            result.extend(res.into_iter());
+                        }
                     },
                     Some(err) => return Err(Error::ApiError(stringify!($name), err)),
                 }
@@ -121,14 +163,15 @@ macro_rules! dynamic {
     }
 }
 
-impl RutrackerApi {
-    pub fn new<S: IntoUrl>(url: S) -> Result<Self> {
+impl<'a> RutrackerApi<'a> {
+    pub fn new<S: IntoUrl>(url: S, db: &'a Database) -> Result<Self> {
         let url = url.into_url()?;
         debug!("RutrackerApi::new::url: {:?}", url);
         let api = RutrackerApi {
             limit: RutrackerApi::get_limit(&url)?,
             url,
             http_client: Client::new(),
+            db,
         };
         debug!("RutrackerApi::new::api: {:?}", api);
         Ok(api)
@@ -146,21 +189,26 @@ impl RutrackerApi {
 
     dynamic!(get_forum_name, forum_id: usize, String);
     dynamic!(get_user_name, user_id: usize, String);
-    dynamic!(get_peer_stats, topic_id: usize, Vec<usize>);
+    dynamic!(get_peer_stats, topic_id: usize, (usize, usize, usize));
     dynamic!(get_topic_id, hash: String, usize);
-    dynamic!(get_tor_topic_data, topic_id: usize, Data);
+    dynamic!(get_tor_topic_data, topic_id: usize, TopicData);
 
     /// Get peer stats for all topics of the sub-forum
-    pub fn pvc(&self, forum_id: usize) -> Result<PeerStats> {
-        let url = self.url.join("v1/static/pvc/f/")?.join(forum_id.to_string().as_str())?;
+    pub fn pvc(&self, forum_id: usize) -> Result<HashMap<usize, TopicInfo>> {
+        let url = self
+            .url
+            .join("v1/static/pvc/f/")?
+            .join(forum_id.to_string().as_str())?;
         trace!("RutrackerApi::pvc::url {:?}", url);
         let res = self.http_client.get(url).send()?.json::<Response<Value>>()?;
         trace!("RutrackerApi::pvc::res {:?}", res);
         match res.error {
             None => {
-                let mut map: PeerStats = serde_json::from_value(res.result)?;
-                map.retain(|_, v| !v.is_empty());
-                Ok(map)
+                let map: HashMap<usize, OptionInfo> = serde_json::from_value(res.result)?;
+                Ok(map
+                    .into_iter()
+                    .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
+                    .collect())
             }
             Some(err) => Err(Error::ApiError("pvc", err)),
         }
