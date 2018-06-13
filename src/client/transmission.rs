@@ -174,7 +174,7 @@ macro_rules! requ_json {
 
 macro_rules! empty_response {
     ($name:ident, $method:tt $(,$argname:ident : $argtype:ident : $argstring:tt)*) => {
-        pub fn $name(&mut self, t: TorrentSelect $(,$argname:$argtype)*) -> Result<()> {
+        pub fn $name(&self, t: TorrentSelect $(,$argname:$argtype)*) -> Result<()> {
             match self.request(&requ_json!(t,$method $(,$argstring:$argname)*))?.json::<Response>()?.result {
                 ResponseStatus::Success => Ok(()),
                 ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),
@@ -200,11 +200,20 @@ impl Transmission {
             None
         };
         debug!("Transmission::new::credentials: {:?}", credentials);
+        let url = url.into_url()?;
+        let http_client = Client::new();
+        let sid = http_client
+            .get(url.clone())
+            .send()?
+            .headers()
+            .get::<SessionId>()
+            .ok_or(Error::ParseIdError)?
+            .clone();
         Ok(Transmission {
-            url: url.into_url()?,
+            url,
             credentials,
-            sid: SessionId(String::new()),
-            http_client: Client::new(),
+            sid,
+            http_client,
         })
     }
 
@@ -213,7 +222,7 @@ impl Transmission {
     /// If the response status is 200, then return a response.
     /// If the response status is 409, then try again with a new SID.
     /// Otherwise return an error.
-    fn request(&mut self, json: &Value) -> Result<reqwest::Response> {
+    fn request(&self, json: &Value) -> Result<reqwest::Response> {
         let resp = self
             .http_client
             .post(self.url.clone())
@@ -223,14 +232,6 @@ impl Transmission {
         trace!("Transmission::request::resp: {:?}", resp);
         match resp.status() {
             StatusCode::Ok => Ok(resp),
-            StatusCode::Conflict => {
-                self.sid = resp
-                    .headers()
-                    .get::<SessionId>()
-                    .ok_or(Error::ParseIdError)?
-                    .clone();
-                self.request(json)
-            }
             _ => Err(Error::UnexpectedResponse(resp.status())),
         }
     }
@@ -245,7 +246,7 @@ impl Transmission {
     empty_response!(remove, "torrent-remove", d:DeleteLocalData:"delete-local-data");
 
     /// Get a list of torrents from the Transmission.
-    pub fn get(&mut self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
+    pub fn get(&self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
         let responce = self
             .request(&requ_json!(t, "torrent-get", "fields": f))?
             .json::<Response>()?;

@@ -1,13 +1,14 @@
 //! A module to access Rutracker API
 
-use database::{self, Database, DatabaseName};
+use database::{self, DBName, Database};
 use reqwest::{self, Client, IntoUrl, Url};
 use serde_json::{self, Value};
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
+type TopicInfoMap = HashMap<usize, TopicInfo>;
 
 quick_error! {
     #[derive(Debug)]
@@ -65,7 +66,7 @@ pub struct TopicData {
     pub seeder_last_seen: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TopicInfo {
     pub tor_status: usize,
     pub seeders: usize,
@@ -81,13 +82,11 @@ impl<'de> ::serde::Deserialize<'de> for OptionInfo {
     {
         ::serde::Deserialize::deserialize(deserializer).map(|info: Vec<usize>| {
             if info.len() == 3 {
-                unsafe {
-                    OptionInfo(Some(TopicInfo {
-                        tor_status: *info.get_unchecked(0),
-                        seeders: *info.get_unchecked(1),
-                        reg_time: *info.get_unchecked(2),
-                    }))
-                }
+                OptionInfo(Some(TopicInfo {
+                    tor_status: info[0],
+                    seeders: info[1],
+                    reg_time: info[2],
+                }))
             } else {
                 OptionInfo(None)
             }
@@ -126,7 +125,7 @@ pub struct RutrackerApi<'a> {
 
 macro_rules! dynamic {
     ($name:ident, $arrayname:ident : $arraytype:ty, $type:ty) => {
-        pub fn $name<T>(&self, $arrayname: &[T], db_name: Option<DatabaseName>) -> Result<HashMap<$arraytype, $type>>
+        pub fn $name<T>(&self, $arrayname: &[T], db_name: Option<DBName>) -> Result<HashMap<$arraytype, $type>>
         where
             T: Borrow<$arraytype> + Display
         {
@@ -149,7 +148,7 @@ macro_rules! dynamic {
                         let res: HashMap<$arraytype, Option<$type>> = serde_json::from_value(res.result)?;
                         let res = res.into_iter().filter_map(|(k, v)| Some((k, v?))).collect();
                         if let Some(name) = db_name {
-                            self.db.put(name, &res)?;
+                            self.db.put_map(name, &res)?;
                         } else {
                             result.extend(res.into_iter());
                         }
@@ -194,21 +193,24 @@ impl<'a> RutrackerApi<'a> {
     dynamic!(get_tor_topic_data, topic_id: usize, TopicData);
 
     /// Get peer stats for all topics of the sub-forum
-    pub fn pvc(&self, forum_id: usize) -> Result<HashMap<usize, TopicInfo>> {
+    pub fn pvc(&self, forum_id: usize) -> Result<()> {
         let url = self
             .url
             .join("v1/static/pvc/f/")?
             .join(forum_id.to_string().as_str())?;
         trace!("RutrackerApi::pvc::url {:?}", url);
-        let res = self.http_client.get(url).send()?.json::<Response<Value>>()?;
-        trace!("RutrackerApi::pvc::res {:?}", res);
+        let res: Response<HashMap<usize, OptionInfo>> = self.http_client.get(url).send()?.json()?;
         match res.error {
             None => {
-                let map: HashMap<usize, OptionInfo> = serde_json::from_value(res.result)?;
-                Ok(map
+                let map = res
+                    .result
                     .into_iter()
                     .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
-                    .collect())
+                    .collect();
+                self.db.put_map(DBName::TopicInfo, &map)?;
+                let set: HashSet<usize> = map.into_iter().map(|(k, _)| k).collect();
+                self.db.put(DBName::ForumList, &forum_id, &set)?;
+                Ok(())
             }
             Some(err) => Err(Error::ApiError("pvc", err)),
         }

@@ -1,7 +1,11 @@
 use client::{self, Torrent, TorrentClient, TorrentStatus};
 use config::ForumConfig;
+use database::{self, DBName, Database};
 use rutracker::api::{self, RutrackerApi, TopicInfo};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+pub type Result<T> = ::std::result::Result<T, Error>;
+type TopicInfoMap = HashMap<usize, TopicInfo>;
 
 quick_error! {
     #[derive(Debug)]
@@ -18,6 +22,12 @@ quick_error! {
             display("{}", err)
             from()
         }
+        Database(err: database::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
     }
 }
 
@@ -28,53 +38,84 @@ struct Client {
 }
 
 impl Client {
-    fn get_list_to_change(&self, peers: usize, topics: &HashMap<usize, TopicInfo>) -> Vec<String> {
-        let mut buf = Vec::new();
-        for (id, t) in &self.list {
-            if let Some(info) = topics.get(id) {
-                if info.seeders >= peers && t.status != TorrentStatus::Other {
-                    buf.push(t.hash.clone());
+    fn start(&mut self, stop: usize, topics: &TopicInfoMap) {
+        let mut ids = Vec::with_capacity(topics.len());
+        {
+            let mut buf = Vec::with_capacity(topics.len());
+            for (id, info) in topics {
+                if info.seeders < stop {
+                    if let Some(torrent) = self.list.get(id) {
+                        if torrent.status == TorrentStatus::Stopped {
+                            buf.push(torrent.hash.as_str());
+                            ids.push(id);
+                        }
+                    }
+                }
+            }
+            match self.client.start(&buf) {
+                Ok(()) => (),
+                Err(err) => {
+                    error!("{}", err);
+                    return;
                 }
             }
         }
-        buf
-    }
-
-    fn start(&mut self, hash: &[String]) {
-        if !hash.is_empty() {
-            let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
-            match self.client.start(&vec) {
-                Ok(()) => self.list.iter_mut().for_each(|(_, t)| {
-                    if hash.contains(&t.hash) {
-                        t.status = TorrentStatus::Seeding;
-                    }
-                }),
-                Err(err) => error!("{:?}", err),
-            }
+        for id in ids {
+            self.list.get_mut(id).unwrap().status = TorrentStatus::Seeding;
         }
     }
 
-    fn stop(&mut self, hash: &[String]) {
-        if !hash.is_empty() {
-            let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
-            match self.client.stop(&vec) {
-                Ok(()) => self.list.iter_mut().for_each(|(_, t)| {
-                    if hash.contains(&t.hash) {
-                        t.status = TorrentStatus::Stopped;
+    fn stop(&mut self, remove: usize, stop: usize, topics: &TopicInfoMap) {
+        let mut ids = Vec::with_capacity(topics.len());
+        {
+            let mut buf = Vec::with_capacity(topics.len());
+            for (id, info) in topics {
+                if info.seeders < remove && info.seeders >= stop {
+                    if let Some(torrent) = self.list.get(id) {
+                        if torrent.status == TorrentStatus::Seeding {
+                            buf.push(torrent.hash.as_str());
+                            ids.push(id);
+                        }
                     }
-                }),
-                Err(err) => error!("{:?}", err),
+                }
             }
+            match self.client.stop(&buf) {
+                Ok(()) => (),
+                Err(err) => {
+                    error!("{}", err);
+                    return;
+                }
+            }
+        }
+        for id in ids {
+            self.list.get_mut(id).unwrap().status = TorrentStatus::Stopped;
         }
     }
 
-    fn remove(&mut self, hash: &[String]) {
-        if !hash.is_empty() {
-            let vec = hash.iter().map(|h| h.as_str()).collect::<Vec<&str>>();
-            match self.client.remove(&vec, false) {
-                Ok(()) => self.list.retain(|_, t| !hash.contains(&t.hash)),
-                Err(err) => error!("{:?}", err),
+    fn remove(&mut self, remove: usize, topics: &TopicInfoMap) {
+        let mut ids = Vec::with_capacity(topics.len());
+        {
+            let mut buf = Vec::with_capacity(topics.len());
+            for (id, info) in topics {
+                if info.seeders >= remove {
+                    if let Some(torrent) = self.list.get(id) {
+                        if torrent.status != TorrentStatus::Other {
+                            buf.push(torrent.hash.as_str());
+                            ids.push(id);
+                        }
+                    }
+                }
             }
+            match self.client.remove(&buf, true) {
+                Ok(()) => (),
+                Err(err) => {
+                    error!("{}", err);
+                    return;
+                }
+            }
+        }
+        for id in ids {
+            self.list.remove(id);
         }
     }
 }
@@ -83,19 +124,35 @@ impl Client {
 pub struct Control<'a> {
     clients: Vec<Client>,
     api: &'a RutrackerApi<'a>,
+    db: &'a Database,
 }
 
 impl<'a> Control<'a> {
-    pub fn new(api: &'a RutrackerApi) -> Self {
-        let control = Control {
+    pub fn new(api: &'a RutrackerApi, db: &'a Database) -> Self {
+        Control {
             clients: Vec::new(),
             api,
-        };
-        trace!("Control::new::list: {:?}", control);
-        control
+            db,
+        }
     }
 
-    pub fn add_client(&mut self, mut client: Box<TorrentClient>) -> Result<(), Error> {
+    fn iter(&self) -> ::std::slice::Iter<Client> {
+        self.clients.iter()
+    }
+
+    fn iter_mut(&mut self) -> ::std::slice::IterMut<Client> {
+        self.clients.iter_mut()
+    }
+
+    fn torrent_ids(&self) -> HashSet<usize> {
+        let mut set: HashSet<usize> = HashSet::new();
+        for client in self.iter() {
+            set.extend(client.list.keys().cloned());
+        }
+        set
+    }
+
+    pub fn add_client(&mut self, client: Box<TorrentClient>) -> Result<()> {
         let list = client.list()?;
         trace!("Control::add_client::list: {:?}", list);
         let mut ids = self.api.get_topic_id(
@@ -110,62 +167,51 @@ impl<'a> Control<'a> {
                 .collect(),
             client,
         };
-        trace!("TorrentList::add_client::client: {:?}", client);
+        trace!("Control::add_client::client: {:?}", client);
         self.clients.push(client);
         Ok(())
     }
 
-    fn start(&mut self, topics: &HashMap<usize, TopicInfo>) {
-        let mut buf = Vec::new();
-        for client in &mut self.clients {
-            for (id, t) in &client.list {
-                if topics.get(id).is_some() && t.status != TorrentStatus::Other {
-                    buf.push(t.hash.clone());
+    pub fn start(&mut self, stop: usize, topics: &TopicInfoMap) {
+        self.iter_mut().for_each(|c| c.start(stop, topics))
+    }
+
+    pub fn stop(&mut self, remove: usize, stop: usize, topics: &TopicInfoMap) {
+        self.iter_mut().for_each(|c| c.stop(remove, stop, topics))
+    }
+
+    pub fn remove(&mut self, remove: usize, topics: &TopicInfoMap) {
+        self.iter_mut().for_each(|c| c.remove(remove, topics))
+    }
+
+    fn get_topic_info(&self, forum_id: usize) -> Result<TopicInfoMap> {
+        self.api.pvc(forum_id)?;
+        let forum_list: HashSet<usize> = self.db.get(DBName::ForumList, &forum_id)?.unwrap();
+        let keys: Vec<usize> = forum_list
+            .intersection(&self.torrent_ids())
+            .cloned()
+            .collect();
+        let topics = self.db.get_map(DBName::TopicInfo, keys)?;
+        Ok(topics
+            .into_iter()
+            .filter_map(|(k, v)| Some((k, v?)))
+            .collect())
+    }
+
+    pub fn apply_config(&mut self, forum: &ForumConfig) {
+        for id in &forum.ids {
+            let topics = match self.get_topic_info(*id) {
+                Ok(t) => t,
+                Err(err) => {
+                    error!("{}", err);
+                    continue;
                 }
+            };
+            if forum.remove != 0 {
+                self.remove(forum.remove, &topics);
             }
-            client.start(&buf);
-            buf.clear();
+            self.stop(forum.remove, forum.stop, &topics);
+            self.start(forum.stop, &topics);
         }
-    }
-
-    fn stop(&mut self, peers: usize, topics: &HashMap<usize, TopicInfo>) {
-        for client in &mut self.clients {
-            let vec = client.get_list_to_change(peers, topics);
-            client.stop(&vec)
-        }
-    }
-
-    fn remove(&mut self, peers: usize, topics: &HashMap<usize, TopicInfo>) {
-        for client in &mut self.clients {
-            let vec = client.get_list_to_change(peers, topics);
-            client.remove(&vec)
-        }
-    }
-
-    pub fn exec(
-        &mut self,
-        real_kill: bool,
-        forum: &ForumConfig,
-        topics: &HashMap<usize, TopicInfo>,
-    ) -> HashMap<usize, Torrent> {
-        let mut map = HashMap::new();
-        if real_kill {
-            self.remove(forum.peers_for_kill, topics);
-        }
-        self.stop(forum.peers_for_stop, topics);
-        self.start(topics);
-        for client in &mut self.clients {
-            let vec: Vec<usize> = client
-                .list
-                .keys()
-                .filter(|id| topics.contains_key(id))
-                .cloned()
-                .collect();
-            map.extend(
-                vec.into_iter()
-                    .map(|id| (id, client.list.remove(&id).unwrap())),
-            );
-        }
-        map
     }
 }

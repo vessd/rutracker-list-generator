@@ -106,10 +106,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
     info!("Соединение с Rutracker API...");
     let api = RutrackerApi::new(config.api_url.as_str(), &database)?;
-    let topics_info = api.pvc(7)?;
-    println!("{:?}", topics_info);
-
-    let mut control = Control::new(&api);
+    let mut control = Control::new(&api, &database);
     info!("Запрос списка имеющихся раздач...");
     for r in &config.client {
         trace!("config.client: {:?}", r);

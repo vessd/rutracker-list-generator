@@ -48,18 +48,18 @@ pub struct Client {
 #[serde(default)]
 pub struct ForumConfig {
     pub ids: Vec<usize>,
-    pub peers_for_download: usize,
-    pub peers_for_kill: usize,
-    pub peers_for_stop: usize,
+    pub remove: usize,
+    pub stop: usize,
+    pub download: usize,
 }
 
 impl Default for ForumConfig {
     fn default() -> ForumConfig {
         ForumConfig {
             ids: Vec::new(),
-            peers_for_download: 3,
-            peers_for_kill: 10,
-            peers_for_stop: 5,
+            remove: 0,
+            stop: 5,
+            download: 3,
         }
     }
 }
@@ -71,7 +71,6 @@ pub struct Config {
     pub ignored_ids: Vec<usize>,
     pub log_file: Option<String>,
     pub log_level: usize,
-    pub real_kill: bool,
     pub client: Vec<Client>,
     pub user: Option<User>,
     pub api_url: String,
@@ -86,7 +85,6 @@ impl Default for Config {
             ignored_ids: Vec::new(),
             log_file: None,
             log_level: 3,
-            real_kill: false,
             client: Vec::new(),
             user: None,
             api_url: String::from("https://api.t-ru.org/"),
