@@ -199,7 +199,6 @@ impl Transmission {
         } else {
             None
         };
-        debug!("Transmission::new::credentials: {:?}", credentials);
         let url = url.into_url()?;
         let http_client = Client::new();
         let sid = http_client
@@ -229,7 +228,6 @@ impl Transmission {
             .json(json)
             .header(self.sid.clone())
             .send()?;
-        trace!("Transmission::request::resp: {:?}", resp);
         match resp.status() {
             StatusCode::Ok => Ok(resp),
             _ => Err(Error::UnexpectedResponse(resp.status())),
@@ -250,7 +248,6 @@ impl Transmission {
         let responce = self
             .request(&requ_json!(t, "torrent-get", "fields": f))?
             .json::<Response>()?;
-        trace!("Transmission::get::responce: {:?}", responce);
         match responce.result {
             ResponseStatus::Success => Ok(responce.arguments.torrents),
             ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),

@@ -2,6 +2,7 @@ use client::{self, Torrent, TorrentClient, TorrentStatus};
 use config::ForumConfig;
 use database::{self, DBName, Database};
 use rutracker::api::{self, RutrackerApi, TopicInfo};
+use slog::Drain;
 use std::collections::{HashMap, HashSet};
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -38,85 +39,72 @@ struct Client {
 }
 
 impl Client {
-    fn start(&mut self, stop: usize, topics: &TopicInfoMap) {
-        let mut ids = Vec::with_capacity(topics.len());
-        {
-            let mut buf = Vec::with_capacity(topics.len());
-            for (id, info) in topics {
-                if info.seeders < stop {
-                    if let Some(torrent) = self.list.get(id) {
-                        if torrent.status == TorrentStatus::Stopped {
-                            buf.push(torrent.hash.as_str());
-                            ids.push(id);
-                        }
-                    }
-                }
-            }
-            match self.client.start(&buf) {
-                Ok(()) => (),
-                Err(err) => {
-                    error!("{}", err);
-                    return;
-                }
-            }
-        }
+    fn get_ids<T, U>(&self, topics: &TopicInfoMap, seeders: T, status: U) -> Vec<usize>
+    where
+        T: Fn(usize) -> bool,
+        U: Fn(TorrentStatus) -> bool,
+    {
+        topics
+            .iter()
+            .filter(|(_, info)| seeders(info.seeders))
+            .filter_map(|(id, _)| Some((id, self.list.get(id)?.status)))
+            .filter(|(_, s)| status(*s))
+            .map(|(id, _)| id)
+            .cloned()
+            .collect()
+    }
+
+    fn get_hashs(&self, ids: &[usize]) -> Vec<&str> {
+        ids.iter()
+            .filter_map(|id| self.list.get(id))
+            .map(|t| t.hash.as_str())
+            .collect()
+    }
+
+    fn set_status(&mut self, status: TorrentStatus, ids: &[usize]) {
         for id in ids {
-            self.list.get_mut(id).unwrap().status = TorrentStatus::Seeding;
+            if let Some(torrent) = self.list.get_mut(id) {
+                torrent.status = status;
+            }
         }
     }
 
-    fn stop(&mut self, remove: usize, stop: usize, topics: &TopicInfoMap) {
-        let mut ids = Vec::with_capacity(topics.len());
-        {
-            let mut buf = Vec::with_capacity(topics.len());
-            for (id, info) in topics {
-                if info.seeders < remove && info.seeders >= stop {
-                    if let Some(torrent) = self.list.get(id) {
-                        if torrent.status == TorrentStatus::Seeding {
-                            buf.push(torrent.hash.as_str());
-                            ids.push(id);
-                        }
-                    }
-                }
-            }
-            match self.client.stop(&buf) {
-                Ok(()) => (),
-                Err(err) => {
-                    error!("{}", err);
-                    return;
-                }
+    fn start(&mut self, ids: &[usize]) -> usize {
+        match self.client.start(&self.get_hashs(ids)) {
+            Ok(()) => (),
+            Err(err) => {
+                error!("Client::start {}", err);
+                return 0;
             }
         }
-        for id in ids {
-            self.list.get_mut(id).unwrap().status = TorrentStatus::Stopped;
-        }
+        self.set_status(TorrentStatus::Seeding, ids);
+        ids.iter().count()
     }
 
-    fn remove(&mut self, remove: usize, topics: &TopicInfoMap) {
-        let mut ids = Vec::with_capacity(topics.len());
-        {
-            let mut buf = Vec::with_capacity(topics.len());
-            for (id, info) in topics {
-                if info.seeders >= remove {
-                    if let Some(torrent) = self.list.get(id) {
-                        if torrent.status != TorrentStatus::Other {
-                            buf.push(torrent.hash.as_str());
-                            ids.push(id);
-                        }
-                    }
-                }
+    fn stop(&mut self, ids: &[usize]) -> usize {
+        match self.client.stop(&self.get_hashs(ids)) {
+            Ok(()) => (),
+            Err(err) => {
+                error!("Client::stop {}", err);
+                return 0;
             }
-            match self.client.remove(&buf, true) {
-                Ok(()) => (),
-                Err(err) => {
-                    error!("{}", err);
-                    return;
-                }
+        }
+        self.set_status(TorrentStatus::Stopped, ids);
+        ids.iter().count()
+    }
+
+    fn remove(&mut self, ids: &[usize]) -> usize {
+        match self.client.remove(&self.get_hashs(ids), true) {
+            Ok(()) => (),
+            Err(err) => {
+                error!("Client::remove {}", err);
+                return 0;
             }
         }
         for id in ids {
             self.list.remove(id);
         }
+        ids.iter().count()
     }
 }
 
@@ -125,41 +113,44 @@ pub struct Control<'a> {
     clients: Vec<Client>,
     api: &'a RutrackerApi<'a>,
     db: &'a Database,
+    dry_run: bool,
 }
 
 impl<'a> Control<'a> {
-    pub fn new(api: &'a RutrackerApi, db: &'a Database) -> Self {
+    pub fn new(api: &'a RutrackerApi, db: &'a Database, dry_run: bool) -> Self {
         Control {
             clients: Vec::new(),
             api,
             db,
+            dry_run,
         }
-    }
-
-    fn iter(&self) -> ::std::slice::Iter<Client> {
-        self.clients.iter()
-    }
-
-    fn iter_mut(&mut self) -> ::std::slice::IterMut<Client> {
-        self.clients.iter_mut()
     }
 
     fn torrent_ids(&self) -> HashSet<usize> {
         let mut set: HashSet<usize> = HashSet::new();
-        for client in self.iter() {
+        for client in &self.clients {
             set.extend(client.list.keys().cloned());
         }
         set
     }
 
     pub fn add_client(&mut self, client: Box<TorrentClient>) -> Result<()> {
+        let trace = ::slog_scope::logger().is_trace_enabled();
         let list = client.list()?;
-        trace!("Control::add_client::list: {:?}", list);
+        if trace {
+            for torrent in &list {
+                trace!("Control::add_client::torrent"; "status" => ?torrent.status, "hash" => &torrent.hash);
+            }
+        }
         let mut ids = self.api.get_topic_id(
             &list.iter().map(|t| &t.hash).collect::<Vec<&String>>(),
             None,
         )?;
-        trace!("Control::add_client::ids: {:?}", ids);
+        if trace {
+            for (hash, id) in &ids {
+                trace!("Control::add_client::torrent"; "id" => id, "hash" => hash);
+            }
+        }
         let client = Client {
             list: list
                 .into_iter()
@@ -167,21 +158,74 @@ impl<'a> Control<'a> {
                 .collect(),
             client,
         };
-        trace!("Control::add_client::client: {:?}", client);
+        if trace {
+            trace!("Control::add_client::client"; "client" => ?client.client);
+            for (id, t) in &client.list {
+                trace!("Control::add_client::client"; "status" => ?t.status, "hash" => &t.hash, "id" => id);
+            }
+        }
         self.clients.push(client);
         Ok(())
     }
 
+    pub fn set_status(&mut self, status: TorrentStatus, ids: &[usize]) {
+        self.clients
+            .iter_mut()
+            .for_each(|c| c.set_status(status, ids));
+    }
+
     pub fn start(&mut self, stop: usize, topics: &TopicInfoMap) {
-        self.iter_mut().for_each(|c| c.start(stop, topics))
+        let seeders = |seeders| seeders < stop;
+        let status = |status| status == TorrentStatus::Stopped;
+        let mut count = 0;
+        for client in &mut self.clients {
+            let ids = client.get_ids(topics, seeders, status);
+            if self.dry_run {
+                for id in ids {
+                    info!("Раздача с id {} будет запущена", id);
+                }
+            } else {
+                count += client.start(&ids);
+            }
+        }
+        info!("Запущено раздач: {}", count);
     }
 
     pub fn stop(&mut self, remove: usize, stop: usize, topics: &TopicInfoMap) {
-        self.iter_mut().for_each(|c| c.stop(remove, stop, topics))
+        let seeders = |seeders| seeders < remove && seeders >= stop;
+        let status = |status| status == TorrentStatus::Seeding;
+        let mut count = 0;
+        for client in &mut self.clients {
+            let ids = client.get_ids(topics, seeders, status);
+            if self.dry_run {
+                for id in ids {
+                    info!(
+                        "Раздача с id {} будет остановлена",
+                        id
+                    );
+                }
+            } else {
+                count += client.stop(&ids);
+            }
+        }
+        info!("Остановлено раздач: {}", count);
     }
 
     pub fn remove(&mut self, remove: usize, topics: &TopicInfoMap) {
-        self.iter_mut().for_each(|c| c.remove(remove, topics))
+        let seeders = |seeders| seeders >= remove;
+        let status = |status| status != TorrentStatus::Other;
+        let mut count = 0;
+        for client in &mut self.clients {
+            let ids = client.get_ids(topics, seeders, status);
+            if self.dry_run {
+                for id in ids {
+                    info!("Раздача с id {} будет удалена", id);
+                }
+            } else {
+                count += client.remove(&ids);
+            }
+        }
+        info!("Удалено раздач: {}", count);
     }
 
     fn get_topic_info(&self, forum_id: usize) -> Result<TopicInfoMap> {
@@ -192,10 +236,16 @@ impl<'a> Control<'a> {
             .cloned()
             .collect();
         let topics = self.db.get_map(DBName::TopicInfo, keys)?;
-        Ok(topics
+        let topics = topics
             .into_iter()
             .filter_map(|(k, v)| Some((k, v?)))
-            .collect())
+            .collect();
+        if ::slog_scope::logger().is_trace_enabled() {
+            for (id, info) in &topics {
+                trace!("Control::get_topic_info::topic"; "info" => ?info, "id" => id);
+            }
+        }
+        Ok(topics)
     }
 
     pub fn apply_config(&mut self, forum: &ForumConfig) {
@@ -203,13 +253,11 @@ impl<'a> Control<'a> {
             let topics = match self.get_topic_info(*id) {
                 Ok(t) => t,
                 Err(err) => {
-                    error!("{}", err);
+                    error!("Control::apply_config::topics: {}", err);
                     continue;
                 }
             };
-            if forum.remove != 0 {
-                self.remove(forum.remove, &topics);
-            }
+            self.remove(forum.remove, &topics);
             self.stop(forum.remove, forum.stop, &topics);
             self.start(forum.stop, &topics);
         }

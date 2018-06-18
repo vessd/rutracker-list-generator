@@ -2,7 +2,7 @@
 
 use database::{self, DBName, Database};
 use reqwest::{self, Client, IntoUrl, Url};
-use serde_json::{self, Value};
+use slog::Drain;
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -25,7 +25,7 @@ quick_error! {
             display("{}", err)
             from()
         }
-        SerdeJson(err: serde_json::Error) {
+        SerdeJson(err: ::serde_json::Error) {
             cause(err)
             description(err.description())
             display("{}", err)
@@ -103,15 +103,7 @@ pub struct ResponseError {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Response<T: Default> {
-    #[serde(skip)]
-    format: (),
     result: T,
-    #[serde(skip)]
-    total_size_bytes: (),
-    #[serde(skip)]
-    update_time: (),
-    #[serde(skip)]
-    update_time_humn: (),
     error: Option<ResponseError>,
 }
 
@@ -141,12 +133,16 @@ macro_rules! dynamic {
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
                 trace!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);
-                let res = self.http_client.get(url).send()?.json::<Response<Value>>()?;
-                trace!(concat!("RutrackerApi::",stringify!($name),"::res: {:?}"), res);
+                let res = self.http_client.get(url).send()?.json::<Response<HashMap<$arraytype, Option<$type>>>>()?;
                 match res.error {
                     None => {
-                        let res: HashMap<$arraytype, Option<$type>> = serde_json::from_value(res.result)?;
-                        let res = res.into_iter().filter_map(|(k, v)| Some((k, v?))).collect();
+                        let res = res.result.into_iter().filter_map(|(k, v)| Some((k, v?))).collect();
+                        if ::slog_scope::logger().is_trace_enabled() {
+                            let location = concat!("RutrackerApi::", stringify!($name), "::reponse");
+                            for (k,v) in &res {
+                                trace!("{}", location; "value" => ?v, "key" => k);
+                            }
+                        }
                         if let Some(name) = db_name {
                             self.db.put_map(name, &res)?;
                         } else {
@@ -156,7 +152,6 @@ macro_rules! dynamic {
                     Some(err) => return Err(Error::ApiError(stringify!($name), err)),
                 }
             }
-            trace!(concat!("RutrackerApi::",stringify!($name),"::result: {:?}"), result);
             Ok(result)
         }
     }
@@ -179,7 +174,7 @@ impl<'a> RutrackerApi<'a> {
     /// Get limit of request.
     fn get_limit(url: &Url) -> Result<usize> {
         let res = reqwest::get(url.join("v1/get_limit")?)?.json::<Response<Limit>>()?;
-        debug!("RutrackerApi::get_limit::res: {:?}", res);
+        debug!("RutrackerApi::get_limit::response: {:?}", res);
         match res.error {
             None => Ok(res.result.limit),
             Some(err) => Err(Error::ApiError("get_limit", err)),
@@ -207,6 +202,11 @@ impl<'a> RutrackerApi<'a> {
                     .into_iter()
                     .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
                     .collect();
+                if ::slog_scope::logger().is_trace_enabled() {
+                    for (id, info) in &map {
+                        trace!("RutrackerApi::pvc::topic"; "info" => ?info, "id" => id);
+                    }
+                }
                 self.db.put_map(DBName::TopicInfo, &map)?;
                 let set: HashSet<usize> = map.into_iter().map(|(k, _)| k).collect();
                 self.db.put(DBName::ForumList, &forum_id, &set)?;

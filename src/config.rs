@@ -30,6 +30,42 @@ pub struct User {
     pub password: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum LogDestination {
+    Stdout,
+    Stderr,
+    File(PathBuf),
+}
+
+impl<'de> ::serde::Deserialize<'de> for LogDestination {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::serde::Deserialize::deserialize(deserializer).map(|path: &str| match path {
+            "stdout" => LogDestination::Stdout,
+            "stderr" => LogDestination::Stderr,
+            _ => LogDestination::File(PathBuf::from(path)),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct LogConfig {
+    pub destination: LogDestination,
+    pub level: usize,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        LogConfig {
+            destination: LogDestination::Stdout,
+            level: 3,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Copy)]
 pub enum ClientName {
     Deluge,
@@ -57,9 +93,9 @@ impl Default for ForumConfig {
     fn default() -> ForumConfig {
         ForumConfig {
             ids: Vec::new(),
-            remove: 0,
+            remove: 11,
             stop: 5,
-            download: 3,
+            download: 2,
         }
     }
 }
@@ -69,13 +105,13 @@ impl Default for ForumConfig {
 pub struct Config {
     pub forum: Vec<ForumConfig>,
     pub ignored_ids: Vec<usize>,
-    pub log_file: Option<String>,
-    pub log_level: usize,
+    pub log: LogConfig,
     pub client: Vec<Client>,
     pub user: Option<User>,
     pub api_url: String,
     pub forum_url: String,
     pub proxy: Option<String>,
+    pub dry_run: bool,
 }
 
 impl Default for Config {
@@ -83,13 +119,13 @@ impl Default for Config {
         Config {
             forum: Vec::new(),
             ignored_ids: Vec::new(),
-            log_file: None,
-            log_level: 3,
+            log: LogConfig::default(),
             client: Vec::new(),
             user: None,
             api_url: String::from("https://api.t-ru.org/"),
             forum_url: String::from("https://rutracker.org/forum/"),
             proxy: None,
+            dry_run: false,
         }
     }
 }
@@ -107,7 +143,6 @@ impl Config {
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let config = toml::from_slice(&buf)?;
-        debug!("Config::from_file::config: {:?}", config);
         Ok(config)
     }
 }
