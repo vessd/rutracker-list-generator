@@ -36,7 +36,7 @@ pub struct Torrent {
 }
 
 /// Torrent status.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub enum TorrentStatus {
     Seeding,
     Stopped,

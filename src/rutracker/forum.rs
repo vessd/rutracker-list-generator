@@ -8,12 +8,11 @@ use reqwest::{Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Read;
-use Config;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 pub type StoredTorrents = HashMap<String, Vec<usize>>;
 
-const MESSAGE_LEN: usize = 120_000;
+pub const MESSAGE_LEN: usize = 120_000;
 
 quick_error! {
     #[derive(Debug)]
@@ -85,40 +84,36 @@ pub struct User {
 }
 
 impl User {
-    pub fn new(config: &Config) -> Result<Self> {
-        if let Some(ref user) = config.user {
-            let url = config.forum_url.as_ref();
-            let client = if let Some(p) = config.proxy.as_ref() {
-                ClientBuilder::new()
-                    .proxy(Proxy::all(p)?)
-                    .redirect(RedirectPolicy::none())
-                    .build()?
-            } else {
-                ClientBuilder::new()
-                    .redirect(RedirectPolicy::none())
-                    .build()?
-            };
-            let name = user.name.clone();
-            let cookie = User::get_cookie(&user.name, &user.password, url, &client)?;
-            let page = client
-                .get((url.to_owned() + "profile.php").as_str())
-                .header(cookie.clone())
-                .query(&[("mode", "viewprofile"), ("u", &user.name)])
-                .send()?
-                .text()?;
-            let (bt, api, id) = User::get_keys(&page).ok_or(Error::Keys)?;
-            let form_token = User::get_form_token(&page).ok_or(Error::Token)?;
-            Ok(User {
-                id,
-                name,
-                bt,
-                api,
-                cookie,
-                form_token,
-            })
+    pub fn new(config: &::config::Forum) -> Result<Self> {
+        let client = if let Some(p) = config.proxy.as_ref() {
+            ClientBuilder::new()
+                .proxy(Proxy::all(p)?)
+                .redirect(RedirectPolicy::none())
+                .build()?
         } else {
-            Err(Error::User)
-        }
+            ClientBuilder::new()
+                .redirect(RedirectPolicy::none())
+                .build()?
+        };
+        let name = config.user.clone().ok_or(Error::User)?;
+        let password = config.password.as_ref().ok_or(Error::User)?;
+        let cookie = User::get_cookie(&name, password, config.url.as_str(), &client)?;
+        let page = client
+            .get((config.url.clone() + "profile.php").as_str())
+            .header(cookie.clone())
+            .query(&[("mode", "viewprofile"), ("u", &name)])
+            .send()?
+            .text()?;
+        let (bt, api, id) = User::get_keys(&page).ok_or(Error::Keys)?;
+        let form_token = User::get_form_token(&page).ok_or(Error::Token)?;
+        Ok(User {
+            id,
+            name,
+            bt,
+            api,
+            cookie,
+            form_token,
+        })
     }
 
     // https://github.com/seanmonstar/reqwest/issues/14
@@ -260,8 +255,8 @@ pub struct RutrackerForum {
 }
 
 impl RutrackerForum {
-    pub fn new(user: User, config: &Config) -> Result<Self> {
-        let url = config.forum_url.clone();
+    pub fn new(user: User, config: &::config::Forum) -> Result<Self> {
+        let url = config.url.clone();
         let proxy = config.proxy.as_ref();
         let mut headers = Headers::new();
         headers.set(user.cookie.clone());
@@ -295,12 +290,14 @@ impl RutrackerForum {
                 Ok(topic) => topic,
                 Err(()) => break,
             };
-            posts.append(&mut topic_main
-                .as_node()
-                .select(".row1,.row2")
-                .unwrap()
-                .filter_map(|d| Post::from_node(d.as_node()))
-                .collect());
+            posts.append(
+                &mut topic_main
+                    .as_node()
+                    .select(".row1,.row2")
+                    .unwrap()
+                    .filter_map(|d| Post::from_node(d.as_node()))
+                    .collect(),
+            );
             if let Some(pg) = document.select(".pg").unwrap().last() {
                 if pg.text_contents() == "След." {
                     if let Some(element) = pg.as_node().as_element() {

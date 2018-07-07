@@ -1,9 +1,8 @@
 use client::{self, Torrent, TorrentClient, TorrentStatus};
-use config::ForumConfig;
-use database::{self, DBName, Database};
-use rutracker::api::{self, RutrackerApi, TopicInfo};
-use slog::Drain;
-use std::collections::{HashMap, HashSet};
+use config::Subforum;
+use database::{DBName, Database};
+use rutracker::api::{RutrackerApi, TopicInfo};
+use std::collections::HashMap;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 type TopicInfoMap = HashMap<usize, TopicInfo>;
@@ -11,7 +10,7 @@ type TopicInfoMap = HashMap<usize, TopicInfo>;
 quick_error! {
     #[derive(Debug)]
     pub enum Error {
-        Api(err: api::Error) {
+        Api(err: ::rutracker::api::Error) {
             cause(err)
             description(err.description())
             display("{}", err)
@@ -23,7 +22,7 @@ quick_error! {
             display("{}", err)
             from()
         }
-        Database(err: database::Error) {
+        Database(err: ::database::Error) {
             cause(err)
             description(err.description())
             display("{}", err)
@@ -35,7 +34,7 @@ quick_error! {
 #[derive(Debug)]
 struct Client {
     list: HashMap<usize, Torrent>,
-    client: Box<TorrentClient>,
+    client: Box<dyn TorrentClient>,
 }
 
 impl Client {
@@ -126,30 +125,25 @@ impl<'a> Control<'a> {
         }
     }
 
-    fn torrent_ids(&self) -> HashSet<usize> {
-        let mut set: HashSet<usize> = HashSet::new();
+    fn torrent_ids(&self) -> Vec<usize> {
+        let mut set = Vec::new();
         for client in &self.clients {
             set.extend(client.list.keys().cloned());
         }
         set
     }
 
-    pub fn add_client(&mut self, client: Box<TorrentClient>) -> Result<()> {
-        let trace = ::slog_scope::logger().is_trace_enabled();
+    pub fn add_client(&mut self, client: Box<dyn TorrentClient>) -> Result<()> {
         let list = client.list()?;
-        if trace {
-            for torrent in &list {
-                trace!("Control::add_client::torrent"; "status" => ?torrent.status, "hash" => &torrent.hash);
-            }
+        for torrent in &list {
+            trace!("Control::add_client::torrent"; "status" => ?torrent.status, "hash" => &torrent.hash);
         }
         let mut ids = self.api.get_topic_id(
-            &list.iter().map(|t| &t.hash).collect::<Vec<&String>>(),
-            None,
+            list.iter().map(|t| t.hash.as_str()).collect(),
+            Some(DBName::TopicId),
         )?;
-        if trace {
-            for (hash, id) in &ids {
-                trace!("Control::add_client::torrent"; "id" => id, "hash" => hash);
-            }
+        for (hash, id) in &ids {
+            trace!("Control::add_client::torrent"; "id" => id, "hash" => hash);
         }
         let client = Client {
             list: list
@@ -158,11 +152,9 @@ impl<'a> Control<'a> {
                 .collect(),
             client,
         };
-        if trace {
-            trace!("Control::add_client::client"; "client" => ?client.client);
-            for (id, t) in &client.list {
-                trace!("Control::add_client::client"; "status" => ?t.status, "hash" => &t.hash, "id" => id);
-            }
+        trace!("Control::add_client::client"; "client" => ?client.client);
+        for (id, t) in &client.list {
+            trace!("Control::add_client::client"; "status" => ?t.status, "hash" => &t.hash, "id" => id);
         }
         self.clients.push(client);
         Ok(())
@@ -172,6 +164,20 @@ impl<'a> Control<'a> {
         self.clients
             .iter_mut()
             .for_each(|c| c.set_status(status, ids));
+    }
+
+    pub fn save_torrents(&self) -> Result<()> {
+        for client in &self.clients {
+            self.db.put_map(
+                DBName::LocalList,
+                &client
+                    .list
+                    .iter()
+                    .map(|(id, torrent)| (*id, torrent.status))
+                    .collect(),
+            )?;
+        }
+        Ok(())
     }
 
     pub fn start(&mut self, stop: usize, topics: &TopicInfoMap) {
@@ -228,29 +234,9 @@ impl<'a> Control<'a> {
         info!("Удалено раздач: {}", count);
     }
 
-    fn get_topic_info(&self, forum_id: usize) -> Result<TopicInfoMap> {
-        self.api.pvc(forum_id)?;
-        let forum_list: HashSet<usize> = self.db.get(DBName::ForumList, &forum_id)?.unwrap();
-        let keys: Vec<usize> = forum_list
-            .intersection(&self.torrent_ids())
-            .cloned()
-            .collect();
-        let topics = self.db.get_map(DBName::TopicInfo, keys)?;
-        let topics = topics
-            .into_iter()
-            .filter_map(|(k, v)| Some((k, v?)))
-            .collect();
-        if ::slog_scope::logger().is_trace_enabled() {
-            for (id, info) in &topics {
-                trace!("Control::get_topic_info::topic"; "info" => ?info, "id" => id);
-            }
-        }
-        Ok(topics)
-    }
-
-    pub fn apply_config(&mut self, forum: &ForumConfig) {
+    pub fn apply_config(&mut self, forum: &Subforum) {
         for id in &forum.ids {
-            let topics = match self.get_topic_info(*id) {
+            let topics = match self.api.pvc(*id, &self.torrent_ids()) {
                 Ok(t) => t,
                 Err(err) => {
                     error!("Control::apply_config::topics: {}", err);

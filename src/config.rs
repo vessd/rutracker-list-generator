@@ -1,6 +1,5 @@
 use std::default::Default;
-use std::fs::File;
-use std::io::Read;
+use std::fs::read;
 use std::path::PathBuf;
 use toml;
 
@@ -25,9 +24,23 @@ quick_error! {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct User {
-    pub name: String,
-    pub password: String,
+#[serde(default)]
+pub struct Forum {
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub url: String,
+    pub proxy: Option<String>,
+}
+
+impl Default for Forum {
+    fn default() -> Self {
+        Forum {
+            user: None,
+            password: None,
+            url: String::from("https://rutracker.org/forum/"),
+            proxy: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -52,14 +65,14 @@ impl<'de> ::serde::Deserialize<'de> for LogDestination {
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
-pub struct LogConfig {
+pub struct Log {
     pub destination: LogDestination,
     pub level: usize,
 }
 
-impl Default for LogConfig {
+impl Default for Log {
     fn default() -> Self {
-        LogConfig {
+        Log {
             destination: LogDestination::Stdout,
             level: 3,
         }
@@ -82,16 +95,16 @@ pub struct Client {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
-pub struct ForumConfig {
+pub struct Subforum {
     pub ids: Vec<usize>,
     pub remove: usize,
     pub stop: usize,
     pub download: usize,
 }
 
-impl Default for ForumConfig {
-    fn default() -> ForumConfig {
-        ForumConfig {
+impl Default for Subforum {
+    fn default() -> Subforum {
+        Subforum {
             ids: Vec::new(),
             remove: 11,
             stop: 5,
@@ -103,28 +116,24 @@ impl Default for ForumConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    pub forum: Vec<ForumConfig>,
-    pub ignored_ids: Vec<usize>,
-    pub log: LogConfig,
+    pub subforum: Vec<Subforum>,
+    pub ignored_id: Vec<usize>,
+    pub log: Log,
     pub client: Vec<Client>,
-    pub user: Option<User>,
+    pub forum: Option<Forum>,
     pub api_url: String,
-    pub forum_url: String,
-    pub proxy: Option<String>,
     pub dry_run: bool,
 }
 
 impl Default for Config {
     fn default() -> Config {
         Config {
-            forum: Vec::new(),
-            ignored_ids: Vec::new(),
-            log: LogConfig::default(),
+            subforum: Vec::new(),
+            ignored_id: Vec::new(),
+            log: Log::default(),
             client: Vec::new(),
-            user: None,
+            forum: None,
             api_url: String::from("https://api.t-ru.org/"),
-            forum_url: String::from("https://rutracker.org/forum/"),
-            proxy: None,
             dry_run: false,
         }
     }
@@ -135,14 +144,7 @@ impl Config {
         Config::default()
     }
 
-    pub fn from_file<F>(file: F) -> Result<Self>
-    where
-        F: Into<PathBuf>,
-    {
-        let mut file = File::open(file.into())?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        let config = toml::from_slice(&buf)?;
-        Ok(config)
+    pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
+        Ok(toml::from_slice(&read(path.into())?)?)
     }
 }

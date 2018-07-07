@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![feature(plugin)]
 #![plugin(clippy)]
-#![allow(cyclomatic_complexity)]
+//#![allow(cyclomatic_complexity)]
 
 extern crate encoding;
 // https://github.com/seanmonstar/reqwest/issues/11
@@ -23,8 +23,8 @@ extern crate serde;
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
-#[macro_use]
-extern crate text_io;
+//#[macro_use]
+//extern crate text_io;
 extern crate bincode;
 extern crate chrono;
 // https://github.com/seanmonstar/reqwest/issues/14
@@ -41,20 +41,36 @@ mod rutracker;
 
 use config::{ClientName, Config};
 use control::Control;
-use rutracker::{RutrackerApi, RutrackerForum};
+use report::{Report, SummaryReport};
+use rutracker::{RutrackerApi, RutrackerForum, User};
 
-fn main() -> Result<(), Box<std::error::Error>> {
+fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let config = Config::from_file("rlg.toml")?;
     let _guard = slog_scope::set_global_logger(log::init(&config.log)?);
 
-    let database = database::Database::new()?;
-    database.clear_db(database::DBName::ForumList)?;
+    info!("Подключение к базе данных...");
+    let database = match database::Database::new() {
+        Ok(db) => db,
+        Err(err) => {
+            crit!("Подключение к базе данных завершилось с ошибкой: {}", err);
+            return Ok(1);
+        }
+    };
+    database.clear_db(database::DBName::SubforumList)?;
     database.clear_db(database::DBName::TopicInfo)?;
+    database.clear_db(database::DBName::LocalList)?;
 
     info!("Соединение с Rutracker API...");
-    let api = RutrackerApi::new(config.api_url.as_str(), &database)?;
-    let mut control = Control::new(&api, &database, config.dry_run);
+    let api = match RutrackerApi::new(config.api_url.as_str(), &database) {
+        Ok(api) => api,
+        Err(err) => {
+            crit!("Соединение с Rutracker API завершилось с ошибкой: {}", err);
+            return Ok(1);
+        }
+    };
+
     info!("Запрос списка имеющихся раздач...");
+    let mut control = Control::new(&api, &database, config.dry_run);
     for c in &config.client {
         match c.client {
             ClientName::Deluge => control.add_client(Box::new(client::Deluge::new()))?,
@@ -64,10 +80,33 @@ fn main() -> Result<(), Box<std::error::Error>> {
             )?))?,
         }
     }
-    control.set_status(client::TorrentStatus::Other, &config.ignored_ids);
+    control.set_status(client::TorrentStatus::Other, &config.ignored_id);
     info!("Приминение настроек...");
-    for f in &config.forum {
+    for f in &config.subforum {
         control.apply_config(f);
     }
-    Ok(())
+    control.save_torrents()?;
+    let forum = if let Some(forum) = config.forum {
+        match User::new(&forum) {
+            Ok(user) => Some(RutrackerForum::new(user, &forum)?),
+            Err(rutracker::forum::Error::User) => None,
+            Err(err) => {
+                error!("RutrackerForum::new {}", err);
+                None
+            }
+        }
+    } else {
+        None
+    }.unwrap();
+    let report = Report::new(1105, &api, &database)?;
+    let report2 = Report::new(1105, &api, &database)?;
+    let mut sumrep = SummaryReport::new(&database, &forum);
+    sumrep.add_report(1105, report);
+    sumrep.add_report(1105, report2);
+    Ok(0)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let exit_code = run()?;
+    std::process::exit(exit_code);
 }

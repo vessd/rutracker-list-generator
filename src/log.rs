@@ -1,12 +1,12 @@
 use chrono::Local;
-use config::{LogConfig, LogDestination};
+use config::{Log, LogDestination};
 use slog::{self, Drain, Level};
 use slog_async::{Async, OverflowStrategy};
 use slog_term::{self, FullFormat, PlainDecorator, TermDecorator};
 use std::fs::{File, OpenOptions};
 use std::io;
 
-pub fn init(config: &LogConfig) -> io::Result<slog::Logger> {
+pub fn init(config: &Log) -> io::Result<slog::Logger> {
     let level = match config.level {
         0 => Level::Critical,
         1 => Level::Error,
@@ -37,7 +37,9 @@ pub fn init(config: &LogConfig) -> io::Result<slog::Logger> {
     };
 
     let drain = FullFormat::new(decorator)
-        .use_custom_timestamp(move |io: &mut io::Write| write!(io, "{}", Local::now().format("%T")))
+        .use_custom_timestamp(move |io: &mut dyn io::Write| {
+            write!(io, "{}", Local::now().format("%T"))
+        })
         .build()
         .fuse();
     let drain = drain.filter_level(level).fuse();
@@ -63,7 +65,7 @@ impl slog_term::Decorator for Decorator {
         f: F,
     ) -> io::Result<()>
     where
-        F: FnOnce(&mut slog_term::RecordDecorator) -> io::Result<()>,
+        F: FnOnce(&mut dyn slog_term::RecordDecorator) -> io::Result<()>,
     {
         match *self {
             Decorator::Term(ref d) => d.with_record(record, logger_values, f),
