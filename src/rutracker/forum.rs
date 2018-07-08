@@ -95,11 +95,12 @@ impl User {
                 .redirect(RedirectPolicy::none())
                 .build()?
         };
-        let name = config.user.clone().ok_or(Error::User)?;
-        let password = config.password.as_ref().ok_or(Error::User)?;
-        let cookie = User::get_cookie(&name, password, config.url.as_str(), &client)?;
+        let name = config.user.name.clone();
+        let password = config.user.password.as_ref();
+        let url = config.url.clone();
+        let cookie = User::get_cookie(&name, password, url.as_str(), &client)?;
         let page = client
-            .get((config.url.clone() + "profile.php").as_str())
+            .get((url + "profile.php").as_str())
             .header(cookie.clone())
             .query(&[("mode", "viewprofile"), ("u", &name)])
             .send()?

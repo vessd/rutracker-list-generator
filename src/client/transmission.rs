@@ -149,8 +149,8 @@ header! { (SessionId, "X-Transmission-Session-Id") => [String] }
 
 /// RPC username and password.
 #[derive(Debug)]
-struct Credentials {
-    user: String,
+struct User {
+    name: String,
     password: String,
 }
 
@@ -158,7 +158,7 @@ struct Credentials {
 #[derive(Debug)]
 pub struct Transmission {
     url: Url,
-    credentials: Option<Credentials>,
+    user: Option<User>,
     sid: SessionId,
     http_client: Client,
 }
@@ -187,14 +187,14 @@ impl Transmission {
     /// Crate new `Transmission` struct.
     ///
     /// Fails if a `url` can not be parsed or if HTTP client fails.
-    pub fn new<U>(url: U, credentials: Option<(&str, &str)>) -> Result<Self>
+    pub fn new<U>(url: U, user: Option<(String, String)>) -> Result<Self>
     where
         U: IntoUrl,
     {
-        let credentials = if let Some((u, p)) = credentials {
-            Some(Credentials {
-                user: u.to_string(),
-                password: p.to_string(),
+        let user = if let Some((n, p)) = user {
+            Some(User {
+                name: n,
+                password: p,
             })
         } else {
             None
@@ -210,7 +210,7 @@ impl Transmission {
             .clone();
         Ok(Transmission {
             url,
-            credentials,
+            user,
             sid,
             http_client,
         })

@@ -72,12 +72,18 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     info!("Запрос списка имеющихся раздач...");
     let mut control = Control::new(&api, &database, config.dry_run);
     for c in &config.client {
-        match c.client {
-            ClientName::Deluge => control.add_client(Box::new(client::Deluge::new()))?,
-            ClientName::Transmission => control.add_client(Box::new(client::Transmission::new(
-                c.address.as_str(),
-                None,
-            )?))?,
+        let user = c
+            .user
+            .as_ref()
+            .map(|u| (u.name.clone(), u.password.clone()));
+        match c.name {
+            ClientName::Transmission => {
+                let url = format!("http://{}:{}/transmission/rpc", c.host, c.port);
+                control.add_client(Box::new(client::Transmission::new(url.as_str(), user)?))?;
+            }
+            ClientName::Deluge => {
+                control.add_client(Box::new(client::Deluge::new()))?;
+            }
         }
     }
     control.set_status(client::TorrentStatus::Other, &config.ignored_id);

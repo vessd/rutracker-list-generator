@@ -1,7 +1,7 @@
 use chrono::Local;
 use client::TorrentStatus;
 use database::{DBName, Database};
-use rutracker::forum::{RutrackerForum, MESSAGE_LEN};
+use rutracker::forum::RutrackerForum;
 use rutracker::{api::TopicData, RutrackerApi};
 use std::collections::HashMap;
 

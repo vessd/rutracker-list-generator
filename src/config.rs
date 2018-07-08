@@ -23,24 +23,22 @@ quick_error! {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct User {
+    pub name: String,
+    pub password: String,
+}
+
 #[derive(Debug, Deserialize)]
-#[serde(default)]
 pub struct Forum {
-    pub user: Option<String>,
-    pub password: Option<String>,
+    pub user: User,
+    #[serde(default = "forum_url")]
     pub url: String,
     pub proxy: Option<String>,
 }
 
-impl Default for Forum {
-    fn default() -> Self {
-        Forum {
-            user: None,
-            password: None,
-            url: String::from("https://rutracker.org/forum/"),
-            proxy: None,
-        }
-    }
+fn forum_url() -> String {
+    String::from("https://rutracker.org/forum/")
 }
 
 #[derive(Debug, Clone)]
@@ -79,21 +77,32 @@ impl Default for Log {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub enum ClientName {
     Deluge,
     Transmission,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Client {
-    pub client: ClientName,
-    pub address: String,
-    pub user: Option<String>,
-    pub password: Option<String>,
+    pub name: ClientName,
+    pub host: String,
+    pub port: u16,
+    pub user: Option<User>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+impl Default for Client {
+    fn default() -> Self {
+        Client {
+            name: ClientName::Transmission,
+            host: "localhost".to_string(),
+            port: 9091,
+            user: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Subforum {
     pub ids: Vec<usize>,
@@ -131,7 +140,7 @@ impl Default for Config {
             subforum: Vec::new(),
             ignored_id: Vec::new(),
             log: Log::default(),
-            client: Vec::new(),
+            client: vec![Client::default()],
             forum: None,
             api_url: String::from("https://api.t-ru.org/"),
             dry_run: false,
