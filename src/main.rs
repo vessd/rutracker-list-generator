@@ -1,7 +1,4 @@
 #![allow(dead_code)]
-#![feature(plugin)]
-#![plugin(clippy)]
-//#![allow(cyclomatic_complexity)]
 
 extern crate encoding;
 // https://github.com/seanmonstar/reqwest/issues/11
@@ -48,7 +45,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let config = Config::from_file("rlg.toml")?;
     let _guard = slog_scope::set_global_logger(log::init(&config.log)?);
 
-    info!("Подключение к базе данных...");
+    /* info!("Подключение к базе данных...");
     let database = match database::Database::new() {
         Ok(db) => db,
         Err(err) => {
@@ -91,7 +88,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     for f in &config.subforum {
         control.apply_config(f);
     }
-    control.save_torrents()?;
+    control.save_torrents()?; */
     let forum = if let Some(forum) = config.forum {
         match User::new(&forum) {
             Ok(user) => Some(RutrackerForum::new(user, &forum)?),
@@ -104,11 +101,16 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     } else {
         None
     }.unwrap();
-    let report = Report::new(1105, &api, &database)?;
-    let report2 = Report::new(1105, &api, &database)?;
+    let keeper_forum = forum.get_forum(
+        1584,
+        String::from("\"Хранители\" (рабочий подфорум)"),
+    );
+    for t in keeper_forum.get_topics()? {
+        println!("{:#?}", t);
+    }
+    /* let report = Report::new(1105, &api, &database)?;
     let mut sumrep = SummaryReport::new(&database, &forum);
-    sumrep.add_report(1105, report);
-    sumrep.add_report(1105, report2);
+    sumrep.add_report(1105, report); */
     Ok(0)
 }
 

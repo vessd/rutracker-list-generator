@@ -1,5 +1,5 @@
 use std::default::Default;
-use std::fs::read;
+use std::fs;
 use std::path::PathBuf;
 use toml;
 
@@ -30,7 +30,7 @@ pub struct User {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Forum {
+pub struct ForumConfig {
     pub user: User,
     #[serde(default = "forum_url")]
     pub url: String,
@@ -129,7 +129,7 @@ pub struct Config {
     pub ignored_id: Vec<usize>,
     pub log: Log,
     pub client: Vec<Client>,
-    pub forum: Option<Forum>,
+    pub forum: Option<ForumConfig>,
     pub api_url: String,
     pub dry_run: bool,
 }
@@ -154,6 +154,6 @@ impl Config {
     }
 
     pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        Ok(toml::from_slice(&read(path.into())?)?)
+        Ok(toml::from_slice(&fs::read(path.into())?)?)
     }
 }

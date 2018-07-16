@@ -1,3 +1,4 @@
+use config::ForumConfig;
 use cookie;
 use encoding::all::WINDOWS_1251;
 use encoding::{DecoderTrap, Encoding};
@@ -10,7 +11,6 @@ use std::collections::HashMap;
 use std::io::Read;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
-pub type StoredTorrents = HashMap<String, Vec<usize>>;
 
 pub const MESSAGE_LEN: usize = 120_000;
 
@@ -74,6 +74,39 @@ quick_error! {
 }
 
 #[derive(Debug)]
+struct IterPage<'a> {
+    url: String,
+    href: Option<String>,
+    client: &'a Client,
+}
+
+impl<'a> Iterator for IterPage<'a> {
+    type Item = Result<NodeRef>;
+    fn next(&mut self) -> Option<Result<NodeRef>> {
+        let url = format!("{}{}", self.url, self.href.take()?);
+        let mut response = match self.client.get(url.as_str()).send() {
+            Ok(r) => r,
+            Err(err) => return Some(Err(err.into())),
+        };
+        let response = match RutrackerForum::decode(&mut response) {
+            Ok(r) => r,
+            Err(err) => return Some(Err(err)),
+        };
+        let document = kuchiki::parse_html().one(response);
+        if let Some(pg) = document.select(".pg").unwrap().last() {
+            if pg.text_contents() == "След." {
+                if let Some(element) = pg.as_node().as_element() {
+                    if let Some(href) = element.attributes.borrow().get("href") {
+                        self.href = Some(href.to_owned());
+                    }
+                }
+            }
+        }
+        Some(Ok(document))
+    }
+}
+
+#[derive(Debug)]
 pub struct User {
     pub id: usize,
     pub name: String,
@@ -84,7 +117,7 @@ pub struct User {
 }
 
 impl User {
-    pub fn new(config: &::config::Forum) -> Result<Self> {
+    pub fn new(config: &ForumConfig) -> Result<Self> {
         let client = if let Some(p) = config.proxy.as_ref() {
             ClientBuilder::new()
                 .proxy(Proxy::all(p)?)
@@ -96,9 +129,8 @@ impl User {
                 .build()?
         };
         let name = config.user.name.clone();
-        let password = config.user.password.as_ref();
         let url = config.url.clone();
-        let cookie = User::get_cookie(&name, password, url.as_str(), &client)?;
+        let cookie = User::get_cookie(config, &client)?;
         let page = client
             .get((url + "profile.php").as_str())
             .header(cookie.clone())
@@ -118,12 +150,12 @@ impl User {
     }
 
     // https://github.com/seanmonstar/reqwest/issues/14
-    fn get_cookie(user: &str, pass: &str, url: &str, client: &Client) -> Result<Cookie> {
+    fn get_cookie(config: &ForumConfig, client: &Client) -> Result<Cookie> {
         let resp = client
-            .post((url.to_owned() + "login.php").as_str())
+            .post((config.url.clone() + "login.php").as_str())
             .form(&[
-                ("login_username", user),
-                ("login_password", pass),
+                ("login_username", config.user.name.as_str()),
+                ("login_password", config.user.password.as_str()),
                 ("login", "Вход"),
             ])
             .send()?;
@@ -170,35 +202,25 @@ impl User {
 }
 
 #[derive(Debug)]
-pub struct Post {
-    id: Option<usize>,
-    author: Option<String>,
-    post_body: NodeDataRef<ElementData>,
+pub struct Post<'a> {
+    pub id: usize,
+    pub author: String,
+    pub body: NodeDataRef<ElementData>,
+    topic: &'a Topic<'a>,
 }
 
-impl Post {
-    fn get_id(node: &NodeRef) -> Option<usize> {
-        node.as_element()?
-            .attributes
-            .borrow()
-            .get("id")?
-            .get(5..)?
-            .parse::<usize>()
-            .ok()
+impl<'a> Post<'a> {
+    fn from_node(node: &NodeRef, topic: &'a Topic) -> Option<Post<'a>> {
+        Some(Post {
+            id: RutrackerForum::get_id(node, "id")?,
+            author: RutrackerForum::get_text(node, ".nick")?,
+            body: node.select_first(".post_body").ok()?,
+            topic,
+        })
     }
 
-    fn get_author(node: &NodeRef) -> Option<String> {
-        Some(
-            node.select_first(".nick")
-                .ok()?
-                .text_contents()
-                .trim()
-                .to_string(),
-        )
-    }
-
-    fn get_t_ids(&self) -> Vec<usize> {
-        self.post_body
+    pub fn get_t_ids(&self) -> Vec<usize> {
+        self.body
             .as_node()
             .select(".postLink")
             .unwrap()
@@ -215,37 +237,164 @@ impl Post {
             .collect()
     }
 
-    fn from_node(node: &NodeRef) -> Option<Post> {
-        Some(Post {
-            id: Post::get_id(node),
-            author: Post::get_author(node),
-            post_body: node.select_first(".post_body").ok()?,
-        })
+    pub fn edit_post(&self, message: &str) -> Result<()> {
+        if message.len() > MESSAGE_LEN {
+            return Err(Error::Message);
+        }
+        let url = format!(
+            "{}posting.php?mode=editpost&p={}",
+            self.topic.forum.rutracker.url, self.id
+        );
+        let reply = self
+            .topic
+            .forum
+            .rutracker
+            .client
+            .post(url.as_str())
+            .form(&[
+                ("mode", "editpost"),
+                ("f", self.topic.forum.id.to_string().as_str()),
+                ("t", self.topic.id.to_string().as_str()),
+                ("p", self.id.to_string().as_str()),
+                ("fontFace", "-1"),
+                ("codeColor", "black"),
+                ("codeSize", "12"),
+                ("align", "-1"),
+                ("codeUrl2", ""),
+                ("message", message),
+                ("submit_mode", "submit"),
+                ("decflag", "2"),
+                ("update_post_time", "on"),
+                (
+                    "form_token",
+                    self.topic.forum.rutracker.user.form_token.as_str(),
+                ),
+            ])
+            .send()?;
+        match reply.status() {
+            StatusCode::Ok => Ok(()),
+            _ => Err(Error::UnexpectedResponse(reply.status())),
+        }
     }
 }
 
 #[derive(Debug)]
-pub struct Topic {
-    pub posts: Vec<Post>,
+pub struct Topic<'a> {
+    pub id: usize,
+    pub author: String,
+    pub title: String,
+    forum: &'a Forum<'a>,
 }
 
-impl Topic {
-    pub fn get_stored_torrents(&self) -> StoredTorrents {
-        let mut map = HashMap::new();
-        for p in self.posts.iter().skip(1) {
-            let author = p.author.clone().unwrap_or_else(|| "unknow".to_owned());
-            let keeper = map.entry(author).or_insert_with(Vec::new);
-            keeper.append(&mut p.get_t_ids());
+impl<'a> Topic<'a> {
+    fn iter(&self) -> IterPage<'a> {
+        IterPage {
+            url: self.forum.rutracker.url.clone(),
+            href: Some(format!("viewtopic.php?t={}", self.id)),
+            client: &self.forum.rutracker.client,
         }
-        map
+    }
+
+    fn from_node(node: &NodeRef, forum: &'a Forum) -> Option<Topic<'a>> {
+        Some(Topic {
+            id: RutrackerForum::get_id(node, "data-topic_id")?,
+            author: RutrackerForum::get_text(node, ".vf-col-author")?,
+            title: RutrackerForum::get_text(node, ".tt-text")?,
+            forum,
+        })
+    }
+
+    pub fn get_stored_torrents(&self) -> Result<HashMap<String, Vec<usize>>> {
+        let mut map = HashMap::new();
+        let posts = self.get_posts()?;
+        for p in posts.iter().skip(1) {
+            let keeper = map.entry(p.author.clone()).or_insert_with(Vec::new);
+            keeper.extend(p.get_t_ids().into_iter());
+        }
+        Ok(map)
+    }
+
+    pub fn get_posts(&self) -> Result<Vec<Post>> {
+        let mut posts = Vec::new();
+        for page in self.iter() {
+            let document = page?;
+            let topic_main = match document.select_first("#topic_main") {
+                Ok(topic) => topic,
+                Err(()) => break,
+            };
+            posts.extend(
+                topic_main
+                    .as_node()
+                    .select(".row1,.row2")
+                    .unwrap()
+                    .filter_map(|d| Post::from_node(d.as_node(), self)),
+            );
+        }
+        Ok(posts)
+    }
+
+    pub fn reply_topic(&self, message: &str) -> Result<()> {
+        if message.len() > MESSAGE_LEN {
+            return Err(Error::Message);
+        }
+        let url = format!(
+            "{}posting.php?mode=reply&t={}",
+            self.forum.rutracker.url, self.id
+        );
+        let reply = self
+            .forum
+            .rutracker
+            .client
+            .post(url.as_str())
+            .form(&[
+                ("mode", "reply"),
+                ("t", self.id.to_string().as_str()),
+                ("fontFace", "-1"),
+                ("codeColor", "black"),
+                ("codeSize", "12"),
+                ("align", "-1"),
+                ("codeUrl2", ""),
+                ("message", message),
+                ("submit_mode", "submit"),
+                ("form_token", self.forum.rutracker.user.form_token.as_str()),
+            ])
+            .send()?;
+        match reply.status() {
+            StatusCode::Ok => Ok(()),
+            _ => Err(Error::UnexpectedResponse(reply.status())),
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct Forum<'a> {
     pub id: usize,
-    pub name: String,
+    pub title: String,
     rutracker: &'a RutrackerForum,
+}
+
+impl<'a> Forum<'a> {
+    fn iter(&self) -> IterPage<'a> {
+        IterPage {
+            url: self.rutracker.url.clone(),
+            href: Some(format!("viewforum.php?f={}", self.id)),
+            client: &self.rutracker.client,
+        }
+    }
+
+    pub fn get_topics(&self) -> Result<Vec<Topic>> {
+        let mut topics = Vec::new();
+        for page in self.iter() {
+            let document = page?;
+            topics.extend(
+                document
+                    .select(".hl-tr")
+                    .unwrap()
+                    .filter_map(|d| Topic::from_node(d.as_node(), self)),
+            );
+        }
+        Ok(topics)
+    }
 }
 
 #[derive(Debug)]
@@ -256,7 +405,7 @@ pub struct RutrackerForum {
 }
 
 impl RutrackerForum {
-    pub fn new(user: User, config: &::config::Forum) -> Result<Self> {
+    pub fn new(user: User, config: &ForumConfig) -> Result<Self> {
         let url = config.url.clone();
         let proxy = config.proxy.as_ref();
         let mut headers = Headers::new();
@@ -272,118 +421,39 @@ impl RutrackerForum {
         Ok(RutrackerForum { client, url, user })
     }
 
+    pub fn get_forum(&self, id: usize, title: String) -> Forum {
+        Forum {
+            id,
+            title,
+            rutracker: self,
+        }
+    }
+
     fn decode<R: Read>(source: &mut R) -> Result<String> {
         let mut buf = Vec::new();
         source.read_to_end(&mut buf)?;
-        match WINDOWS_1251.decode(&buf, DecoderTrap::Replace) {
-            Ok(s) => Ok(s),
-            Err(err) => Err(Error::Decode(err)),
-        }
+        WINDOWS_1251
+            .decode(&buf, DecoderTrap::Replace)
+            .map_err(Error::Decode)
     }
 
-    fn get_posts(&self, mut url: String) -> Result<Vec<Post>> {
-        let mut posts = Vec::new();
-        loop {
-            let mut resp = self.client.get(url.as_str()).send()?;
-            let resp = RutrackerForum::decode(&mut resp)?;
-            let document = kuchiki::parse_html().one(resp);
-            let topic_main = match document.select_first("#topic_main") {
-                Ok(topic) => topic,
-                Err(()) => break,
-            };
-            posts.append(
-                &mut topic_main
-                    .as_node()
-                    .select(".row1,.row2")
-                    .unwrap()
-                    .filter_map(|d| Post::from_node(d.as_node()))
-                    .collect(),
-            );
-            if let Some(pg) = document.select(".pg").unwrap().last() {
-                if pg.text_contents() == "След." {
-                    if let Some(element) = pg.as_node().as_element() {
-                        if let Some(href) = element.attributes.borrow().get("href") {
-                            url = href.to_owned();
-                            url.insert_str(0, self.url.as_str());
-                            continue;
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        Ok(posts)
+    fn get_text(node: &NodeRef, selectors: &str) -> Option<String> {
+        Some(
+            node.select_first(selectors)
+                .ok()?
+                .text_contents()
+                .trim()
+                .to_owned(),
+        )
     }
 
-    pub fn get_topic(&self, id: usize) -> Result<Topic> {
-        let mut url = id.to_string();
-        url.insert_str(0, "viewtopic.php?t=");
-        url.insert_str(0, self.url.as_str());
-        let posts = self.get_posts(url)?;
-        Ok(Topic { posts })
+    fn get_id(node: &NodeRef, attribute: &str) -> Option<usize> {
+        node.as_element()?
+            .attributes
+            .borrow()
+            .get(attribute)?
+            .trim_matches(|c: char| !c.is_digit(10))
+            .parse::<usize>()
+            .ok()
     }
-
-    pub fn reply_topic(&self, id: usize, message: &str) -> Result<()> {
-        if message.len() > MESSAGE_LEN {
-            return Err(Error::Message);
-        }
-        let mut url = id.to_string();
-        url.insert_str(0, "posting.php?mode=reply&t=");
-        url.insert_str(0, self.url.as_str());
-        let reply = self
-            .client
-            .post(url.as_str())
-            .form(&[
-                ("mode", "reply"),
-                ("t", id.to_string().as_str()),
-                ("fontFace", "-1"),
-                ("codeColor", "black"),
-                ("codeSize", "12"),
-                ("align", "-1"),
-                ("codeUrl2", ""),
-                ("message", message),
-                ("submit_mode", "submit"),
-                ("form_token", self.user.form_token.as_str()),
-            ])
-            .send()?;
-        match reply.status() {
-            StatusCode::Ok => Ok(()),
-            _ => Err(Error::UnexpectedResponse(reply.status())),
-        }
-    }
-
-    pub fn edit_post(&self, f_id: usize, t_id: usize, p_id: usize, message: &str) -> Result<()> {
-        if message.len() > MESSAGE_LEN {
-            return Err(Error::Message);
-        }
-        let mut url = p_id.to_string();
-        url.insert_str(0, "posting.php?mode=editpost&p=");
-        url.insert_str(0, self.url.as_str());
-        let reply = self
-            .client
-            .post(url.as_str())
-            .form(&[
-                ("mode", "editpost"),
-                ("f", f_id.to_string().as_str()),
-                ("t", t_id.to_string().as_str()),
-                ("p", p_id.to_string().as_str()),
-                ("fontFace", "-1"),
-                ("codeColor", "black"),
-                ("codeSize", "12"),
-                ("align", "-1"),
-                ("codeUrl2", ""),
-                ("message", message),
-                ("submit_mode", "submit"),
-                ("decflag", "2"),
-                ("update_post_time", "on"),
-                ("form_token", self.user.form_token.as_str()),
-            ])
-            .send()?;
-        match reply.status() {
-            StatusCode::Ok => Ok(()),
-            _ => Err(Error::UnexpectedResponse(reply.status())),
-        }
-    }
-
-    //pub fn get_forum(&self, id: usize, name: String) -> Result<Forum> {}
 }

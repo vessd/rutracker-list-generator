@@ -172,7 +172,7 @@ impl<'a> SummaryReport<'a> {
         }
     }
 
-    pub fn send(&self) -> Result<()> {
+    /* pub fn send(&self) -> Result<()> {
         let mut count = 0;
         let mut size = 0f64;
         for (id, report) in &self.report {
@@ -180,5 +180,5 @@ impl<'a> SummaryReport<'a> {
             size += report.size;
         }
         Ok(())
-    }
+    } */
 }
