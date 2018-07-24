@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-extern crate encoding;
+extern crate encoding_rs;
 // https://github.com/seanmonstar/reqwest/issues/11
 #[macro_use]
 extern crate hyper;
@@ -20,6 +20,7 @@ extern crate serde;
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
+extern crate url;
 //#[macro_use]
 //extern crate text_io;
 extern crate bincode;
@@ -45,7 +46,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let config = Config::from_file("rlg.toml")?;
     let _guard = slog_scope::set_global_logger(log::init(&config.log)?);
 
-    /* info!("Подключение к базе данных...");
+    info!("Подключение к базе данных...");
     let database = match database::Database::new() {
         Ok(db) => db,
         Err(err) => {
@@ -88,7 +89,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     for f in &config.subforum {
         control.apply_config(f);
     }
-    control.save_torrents()?; */
+    control.save_torrents()?;
     let forum = if let Some(forum) = config.forum {
         match User::new(&forum) {
             Ok(user) => Some(RutrackerForum::new(user, &forum)?),
@@ -101,16 +102,30 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     } else {
         None
     }.unwrap();
-    let keeper_forum = forum.get_forum(
-        1584,
-        String::from("\"Хранители\" (рабочий подфорум)"),
-    );
-    for t in keeper_forum.get_topics()? {
-        println!("{:#?}", t);
+
+    let mut sumrep = SummaryReport::new(&database, &api, &forum);
+    for subforum in &config.subforum {
+        for id in &subforum.ids {
+            let topics_id = database
+                .get_map(
+                    database::DBName::LocalList,
+                    database.get(database::DBName::SubforumList, id)?,
+                )?
+                .into_iter()
+                .filter(|(_, status)| *status == Some(client::TorrentStatus::Seeding))
+                .map(|(id, _)| id)
+                .collect();
+            let report = match Report::new(&api, *id, topics_id) {
+                Ok(r) => r,
+                Err(err) => {
+                    error!("Report::new {}", err);
+                    return Ok(1);
+                }
+            };
+            sumrep.add_report(report);
+        }
     }
-    /* let report = Report::new(1105, &api, &database)?;
-    let mut sumrep = SummaryReport::new(&database, &forum);
-    sumrep.add_report(1105, report); */
+    sumrep.send()?;
     Ok(0)
 }
 

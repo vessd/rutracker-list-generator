@@ -1,14 +1,12 @@
 use config::ForumConfig;
 use cookie;
-use encoding::all::WINDOWS_1251;
-use encoding::{DecoderTrap, Encoding};
+use encoding_rs::WINDOWS_1251;
 use kuchiki::traits::TendrilSink;
 use kuchiki::{self, ElementData, NodeDataRef, NodeRef};
-use reqwest::header::{Cookie, Headers, SetCookie};
+use reqwest::header::{ContentType, Cookie, Headers, SetCookie};
 use reqwest::{Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode};
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Read;
+use url::form_urlencoded;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 
@@ -40,12 +38,6 @@ quick_error! {
             display("keys not found")
         }
         User
-        Parse(err: ::std::num::ParseIntError) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
         Unexpected {
             description("unexpected error")
             display("unexpected error")
@@ -66,10 +58,6 @@ quick_error! {
             display("{}", err)
             from()
         }
-        Decode(s: Cow<'static, str>) {
-            description("decoder error")
-            display("{}", s)
-        }
     }
 }
 
@@ -88,9 +76,9 @@ impl<'a> Iterator for IterPage<'a> {
             Ok(r) => r,
             Err(err) => return Some(Err(err.into())),
         };
-        let response = match RutrackerForum::decode(&mut response) {
+        let response = match response.text() {
             Ok(r) => r,
-            Err(err) => return Some(Err(err)),
+            Err(err) => return Some(Err(err.into())),
         };
         let document = kuchiki::parse_html().one(response);
         if let Some(pg) = document.select(".pg").unwrap().last() {
@@ -212,32 +200,50 @@ pub struct Post<'a> {
 impl<'a> Post<'a> {
     fn from_node(node: &NodeRef, topic: &'a Topic) -> Option<Post<'a>> {
         Some(Post {
-            id: RutrackerForum::get_id(node, "id")?,
+            id: RutrackerForum::get_id(node, "id").or_else(|| {
+                RutrackerForum::get_id(node.select_first(".small").ok()?.as_node(), "href")
+            })?,
             author: RutrackerForum::get_text(node, ".nick")?,
             body: node.select_first(".post_body").ok()?,
             topic,
         })
     }
 
-    pub fn get_t_ids(&self) -> Vec<usize> {
+    pub fn get_stored_torrents(&self) -> Vec<usize> {
         self.body
             .as_node()
             .select(".postLink")
             .unwrap()
-            .filter_map(|link| {
-                link.as_node()
-                    .as_element()?
-                    .attributes
-                    .borrow()
-                    .get("href")?
-                    .get(16..)?
-                    .parse()
-                    .ok()
-            })
+            .filter_map(|link| RutrackerForum::get_id(link.as_node(), "href"))
             .collect()
     }
 
-    pub fn edit_post(&self, message: &str) -> Result<()> {
+    pub fn get_stored_torrents_info(&self) -> Option<(usize, f64)> {
+        let node = self
+            .body
+            .as_node()
+            .children()
+            .filter(|n| n.as_text().is_some())
+            .find(|n| {
+                n.as_text().unwrap().borrow().trim().starts_with(
+                    "Всего хранимых раздач в подразделе:",
+                )
+            })?;
+        let s = node.as_text().unwrap().borrow();
+        let mut s = s.split_whitespace();
+        let count = s.nth(5)?.parse().ok()?;
+        let mut size = s.nth(2)?.parse().ok()?;
+        match s.next()? {
+            "KB" => size *= 10f64.exp2(),
+            "MB" => size *= 20f64.exp2(),
+            "GB" => size *= 30f64.exp2(),
+            "TB" => size *= 40f64.exp2(),
+            _ => size *= 1f64,
+        }
+        Some((count, size))
+    }
+
+    pub fn edit(&self, message: &str) -> Result<()> {
         if message.len() > MESSAGE_LEN {
             return Err(Error::Message);
         }
@@ -245,35 +251,33 @@ impl<'a> Post<'a> {
             "{}posting.php?mode=editpost&p={}",
             self.topic.forum.rutracker.url, self.id
         );
-        let reply = self
-            .topic
-            .forum
-            .rutracker
-            .client
-            .post(url.as_str())
-            .form(&[
-                ("mode", "editpost"),
-                ("f", self.topic.forum.id.to_string().as_str()),
-                ("t", self.topic.id.to_string().as_str()),
-                ("p", self.id.to_string().as_str()),
-                ("fontFace", "-1"),
-                ("codeColor", "black"),
-                ("codeSize", "12"),
-                ("align", "-1"),
-                ("codeUrl2", ""),
-                ("message", message),
-                ("submit_mode", "submit"),
-                ("decflag", "2"),
-                ("update_post_time", "on"),
-                (
-                    "form_token",
-                    self.topic.forum.rutracker.user.form_token.as_str(),
-                ),
-            ])
-            .send()?;
-        match reply.status() {
+        let params = RutrackerForum::encode(&[
+            ("mode", "editpost"),
+            ("f", self.topic.forum.id.to_string().as_str()),
+            ("t", self.topic.id.to_string().as_str()),
+            ("p", self.id.to_string().as_str()),
+            ("subject", self.topic.title.as_str()),
+            ("fontFace", "-1"),
+            ("codeColor", "black"),
+            ("codeSize", "12"),
+            ("align", "-1"),
+            ("codeUrl2", ""),
+            ("message", message),
+            ("submit_mode", "submit"),
+            ("decflag", "2"),
+            ("update_post_time", "on"),
+            (
+                "form_token",
+                self.topic.forum.rutracker.user.form_token.as_str(),
+            ),
+        ]);
+        let mut requ = self.topic.forum.rutracker.client.post(url.as_str());
+        requ.body(params).header(ContentType::form_url_encoded());
+        trace!("{:#?}", requ);
+        let resp = requ.send()?;
+        match resp.status() {
             StatusCode::Ok => Ok(()),
-            _ => Err(Error::UnexpectedResponse(reply.status())),
+            _ => Err(Error::UnexpectedResponse(resp.status())),
         }
     }
 }
@@ -309,7 +313,7 @@ impl<'a> Topic<'a> {
         let posts = self.get_posts()?;
         for p in posts.iter().skip(1) {
             let keeper = map.entry(p.author.clone()).or_insert_with(Vec::new);
-            keeper.extend(p.get_t_ids().into_iter());
+            keeper.extend(p.get_stored_torrents().into_iter());
         }
         Ok(map)
     }
@@ -333,7 +337,30 @@ impl<'a> Topic<'a> {
         Ok(posts)
     }
 
-    pub fn reply_topic(&self, message: &str) -> Result<()> {
+    pub fn get_user_posts(&self) -> Result<Vec<Post>> {
+        let mut posts = Vec::new();
+        let iter = IterPage {
+            url: self.forum.rutracker.url.clone(),
+            href: Some(format!(
+                "search.php?uid={}&t={}&dm=1",
+                self.forum.rutracker.user.id, self.id
+            )),
+            client: &self.forum.rutracker.client,
+        };
+        for page in iter {
+            let document = page?;
+            posts.extend(
+                document
+                    .select(".row1,.row2")
+                    .unwrap()
+                    .filter_map(|d| Post::from_node(d.as_node(), self)),
+            );
+        }
+        posts.reverse();
+        Ok(posts)
+    }
+
+    pub fn reply(&self, message: &str) -> Result<Option<usize>> {
         if message.len() > MESSAGE_LEN {
             return Err(Error::Message);
         }
@@ -341,28 +368,35 @@ impl<'a> Topic<'a> {
             "{}posting.php?mode=reply&t={}",
             self.forum.rutracker.url, self.id
         );
-        let reply = self
+        let params = RutrackerForum::encode(&[
+            ("mode", "reply"),
+            ("t", self.id.to_string().as_str()),
+            ("fontFace", "-1"),
+            ("codeColor", "black"),
+            ("codeSize", "12"),
+            ("align", "-1"),
+            ("codeUrl2", ""),
+            ("message", message),
+            ("submit_mode", "submit"),
+            ("form_token", self.forum.rutracker.user.form_token.as_str()),
+        ]);
+        let mut resp = self
             .forum
             .rutracker
             .client
             .post(url.as_str())
-            .form(&[
-                ("mode", "reply"),
-                ("t", self.id.to_string().as_str()),
-                ("fontFace", "-1"),
-                ("codeColor", "black"),
-                ("codeSize", "12"),
-                ("align", "-1"),
-                ("codeUrl2", ""),
-                ("message", message),
-                ("submit_mode", "submit"),
-                ("form_token", self.forum.rutracker.user.form_token.as_str()),
-            ])
+            .body(params)
+            .header(ContentType::form_url_encoded())
             .send()?;
-        match reply.status() {
-            StatusCode::Ok => Ok(()),
-            _ => Err(Error::UnexpectedResponse(reply.status())),
+        if resp.status() != StatusCode::Ok {
+            return Err(Error::UnexpectedResponse(resp.status()));
         }
+        let document = kuchiki::parse_html().one(resp.text()?);
+        let post_id = match document.select_first(".mrg_16 a") {
+            Ok(data) => RutrackerForum::get_id(data.as_node(), "href"),
+            Err(()) => None,
+        };
+        Ok(post_id)
     }
 }
 
@@ -379,6 +413,15 @@ impl<'a> Forum<'a> {
             url: self.rutracker.url.clone(),
             href: Some(format!("viewforum.php?f={}", self.id)),
             client: &self.rutracker.client,
+        }
+    }
+
+    pub fn get_topic<T: Into<String>>(&self, id: usize, author: T, title: T) -> Topic {
+        Topic {
+            id,
+            author: author.into(),
+            title: title.into(),
+            forum: self,
         }
     }
 
@@ -399,9 +442,9 @@ impl<'a> Forum<'a> {
 
 #[derive(Debug)]
 pub struct RutrackerForum {
+    pub user: User,
     client: Client,
     url: String,
-    user: User,
 }
 
 impl RutrackerForum {
@@ -421,20 +464,12 @@ impl RutrackerForum {
         Ok(RutrackerForum { client, url, user })
     }
 
-    pub fn get_forum(&self, id: usize, title: String) -> Forum {
+    pub fn get_forum<T: Into<String>>(&self, id: usize, title: T) -> Forum {
         Forum {
             id,
-            title,
+            title: title.into(),
             rutracker: self,
         }
-    }
-
-    fn decode<R: Read>(source: &mut R) -> Result<String> {
-        let mut buf = Vec::new();
-        source.read_to_end(&mut buf)?;
-        WINDOWS_1251
-            .decode(&buf, DecoderTrap::Replace)
-            .map_err(Error::Decode)
     }
 
     fn get_text(node: &NodeRef, selectors: &str) -> Option<String> {
@@ -452,8 +487,16 @@ impl RutrackerForum {
             .attributes
             .borrow()
             .get(attribute)?
-            .trim_matches(|c: char| !c.is_digit(10))
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|s| !s.is_empty())?
             .parse::<usize>()
             .ok()
+    }
+
+    fn encode(vec: &[(&str, &str)]) -> String {
+        form_urlencoded::Serializer::new(String::new())
+            .custom_encoding_override(|s| WINDOWS_1251.encode(s).0)
+            .extend_pairs(vec)
+            .finish()
     }
 }

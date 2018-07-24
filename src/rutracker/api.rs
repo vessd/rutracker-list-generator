@@ -89,7 +89,7 @@ impl ::serde::Serialize for TopicStat {
 pub struct TopicData {
     pub info_hash: String,
     pub forum_id: usize,
-    pub poster_id: usize,
+    pub poster_id: isize,
     pub size: f64,
     pub reg_time: usize,
     pub tor_status: usize,
@@ -225,6 +225,16 @@ impl<'a> RutrackerApi<'a> {
     dynamic!(get_topic_id, hash: &str, String, usize);
     dynamic!(get_tor_topic_data, topic_id: &usize, usize, TopicData);
 
+    pub fn forum_size(&self) -> Result<HashMap<usize, (usize, f64)>> {
+        let url = self.url.join("v1/static/forum_size")?;
+        trace!("RutrackerApi::forum_size::url {:?}", url);
+        let res: Response<HashMap<_, _>> = self.http_client.get(url).send()?.json()?;
+        match res.error {
+            None => Ok(res.result),
+            Some(err) => Err(Error::ApiError("pvc", err)),
+        }
+    }
+
     /// Get peer stats for all topics of the sub-forum
     pub fn pvc(&self, forum_id: usize, topic_id: &[usize]) -> Result<HashMap<usize, TopicInfo>> {
         let url = self
@@ -244,9 +254,11 @@ impl<'a> RutrackerApi<'a> {
                     trace!("RutrackerApi::pvc::topic"; "info" => ?info, "id" => id);
                 }
                 self.db.put_map(DBName::TopicInfo, &map)?;
-                let set: Vec<usize> = map.iter().map(|(k, _)| *k).collect();
-                self.db.put(DBName::SubforumList, &forum_id, &set)?;
-                map.retain(|id, _| topic_id.contains(id));
+                let vec: Vec<usize> = map.iter().map(|(k, _)| *k).collect();
+                self.db.put(DBName::SubforumList, &forum_id, &vec)?;
+                if !topic_id.is_empty() {
+                    map.retain(|id, _| topic_id.contains(id));
+                }
                 Ok(map)
             }
             Some(err) => Err(Error::ApiError("pvc", err)),

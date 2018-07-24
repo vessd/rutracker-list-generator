@@ -51,7 +51,9 @@ pub struct Database {
 impl Database {
     pub fn new() -> Result<Self> {
         let env = lmdb::Environment::new()
+            .set_max_readers(1)
             .set_max_dbs(6)
+            .set_map_size(10485760 * 10)
             .open(Path::new("db"))?;
         let empty = lmdb::DatabaseFlags::empty();
         let topic_id = env.create_db(Some("topic_id"), empty)?;
@@ -124,6 +126,7 @@ impl Database {
         K: Serialize + Value,
         V: DeserializeOwned + Debug,
     {
+        trace!("Database::get"; "key" => key);
         let ro_txn = self.env.begin_ro_txn()?;
         let res = match ro_txn.get(self.get_db(db_name), &serialize(key)?) {
             Ok(val) => deserialize(val)?,
