@@ -133,7 +133,7 @@ impl Database {
             Err(err) => return Err(err.into()),
         };
         ro_txn.commit()?;
-        trace!("Database::get"; "value" => ?res, "key" => key);
+        trace!("Database::get"; "value" => ?&res, "key" => key);
         Ok(res)
     }
 
@@ -150,7 +150,7 @@ impl Database {
                 Err(lmdb::Error::NotFound) => None,
                 Err(err) => return Err(err.into()),
             };
-            trace!("Database::get_map"; "value" => ?val, "key" => &key, "db_name" => ?db_name);
+            trace!("Database::get_map"; "value" => ?&val, "key" => &key, "db_name" => ?db_name);
             map.insert(key, val);
         }
         ro_txn.commit()?;

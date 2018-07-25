@@ -152,7 +152,7 @@ impl<'a> Control<'a> {
                 .collect(),
             client,
         };
-        trace!("Control::add_client::client"; "client" => ?client.client);
+        trace!("Control::add_client::client"; "client" => ?&client.client);
         for (id, t) in &client.list {
             trace!("Control::add_client::client"; "status" => ?t.status, "hash" => &t.hash, "id" => id);
         }
