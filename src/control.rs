@@ -1,7 +1,7 @@
 use client::{self, Torrent, TorrentClient, TorrentStatus};
 use config::Subforum;
 use database::{DBName, Database};
-use rutracker::api::{RutrackerApi, TopicInfo};
+use rutracker::api::TopicInfo;
 use std::collections::HashMap;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -10,12 +10,6 @@ type TopicInfoMap = HashMap<usize, TopicInfo>;
 quick_error! {
     #[derive(Debug)]
     pub enum Error {
-        Api(err: ::rutracker::api::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
         Client(err: client::Error) {
             cause(err)
             description(err.description())
@@ -110,22 +104,20 @@ impl Client {
 #[derive(Debug)]
 pub struct Control<'a> {
     clients: Vec<Client>,
-    api: &'a RutrackerApi<'a>,
     db: &'a Database,
     dry_run: bool,
 }
 
 impl<'a> Control<'a> {
-    pub fn new(api: &'a RutrackerApi, db: &'a Database, dry_run: bool) -> Self {
+    pub fn new(db: &'a Database, dry_run: bool) -> Self {
         Control {
             clients: Vec::new(),
-            api,
             db,
             dry_run,
         }
     }
 
-    fn torrent_ids(&self) -> Vec<usize> {
+    fn torrent_id(&self) -> Vec<usize> {
         let mut set = Vec::new();
         for client in &self.clients {
             set.extend(client.list.keys().cloned());
@@ -138,10 +130,9 @@ impl<'a> Control<'a> {
         for torrent in &list {
             trace!("Control::add_client::torrent"; "status" => ?torrent.status, "hash" => &torrent.hash);
         }
-        let mut ids = self.api.get_topic_id(
-            list.iter().map(|t| t.hash.as_str()).collect(),
-            Some(DBName::TopicId),
-        )?;
+        let mut ids = self
+            .db
+            .get_topic_id(list.iter().map(|t| t.hash.as_str()).collect::<Vec<&str>>())?;
         for (hash, id) in &ids {
             trace!("Control::add_client::torrent"; "id" => id, "hash" => hash);
         }
@@ -235,8 +226,9 @@ impl<'a> Control<'a> {
     }
 
     pub fn apply_config(&mut self, forum: &Subforum) {
+        let torrent_id = self.torrent_id();
         for id in &forum.ids {
-            let topics = match self.api.pvc(*id, &self.torrent_ids()) {
+            let topics = match self.db.pvc(*id, Some(&torrent_id)) {
                 Ok(t) => t,
                 Err(err) => {
                     error!("Control::apply_config::topics: {}", err);

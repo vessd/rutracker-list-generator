@@ -1,7 +1,7 @@
 use chrono::Local;
 use database::{DBName, Database};
+use rutracker::api::TopicData;
 use rutracker::forum::{Forum, RutrackerForum, Topic, MESSAGE_LEN};
-use rutracker::{api::TopicData, RutrackerApi as Api};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
@@ -39,12 +39,12 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn new(api: &Api, forum: usize, id: Vec<usize>) -> Result<Self> {
+    pub fn new(db: &Database, forum: usize, id: Vec<usize>) -> Result<Self> {
         for id in &id {
             trace!("Report::new"; "id" => id);
         }
-        let size = api
-            .get_tor_topic_data(id.iter().collect(), Some(DBName::TopicData))?
+        let size = db
+            .get_tor_topic_data(&id)?
             .iter()
             .map(|(_, data)| data.size)
             .sum();
@@ -79,7 +79,7 @@ impl Report {
             ).as_str(),
         );
         let mut item: Vec<(usize, String, f64)> = db
-            .get_map(DBName::TopicData, self.id.to_vec())?
+            .get_map(DBName::TopicData, &self.id)?
             .into_iter()
             .filter_map(|(id, data): (usize, Option<TopicData>)| {
                 let data = data?;
@@ -147,17 +147,15 @@ pub struct SummaryReport<'a> {
     report: Vec<Report>,
     date: String,
     db: &'a Database,
-    api: &'a Api<'a>,
     forum: &'a RutrackerForum,
 }
 
 impl<'a> SummaryReport<'a> {
-    pub fn new(db: &'a Database, api: &'a Api, forum: &'a RutrackerForum) -> Self {
+    pub fn new(db: &'a Database, forum: &'a RutrackerForum) -> Self {
         SummaryReport {
             report: Vec::new(),
             date: Local::now().format("%d.%m.%Y").to_string(),
             db,
-            api,
             forum,
         }
     }
@@ -166,8 +164,10 @@ impl<'a> SummaryReport<'a> {
         self.report.push(report);
     }
 
-    fn get_topics(&self, forum: &'a Forum, id: Vec<&usize>) -> Result<HashMap<usize, Topic<'a>>> {
-        let forum_name = self.api.get_forum_name(id, None)?;
+    fn get_topics(
+        &self, forum: &'a Forum, forum_id: &[usize],
+    ) -> Result<HashMap<usize, Topic<'a>>> {
+        let forum_name = self.db.get_forum_name(forum_id)?;
         let mut forum_name: HashMap<&str, usize> =
             forum_name.iter().map(|(k, v)| (v.as_str(), *k)).collect();
         Ok(forum
@@ -205,11 +205,7 @@ impl<'a> SummaryReport<'a> {
         };
         if topic.author == name {
             info!("Формирование статиски подраздела...");
-            let forum_size = self
-                .api
-                .forum_size()?
-                .remove(&report.forum)
-                .unwrap_or((0, 0f64));
+            let forum_size = self.db.get_forum_size(report.forum)?.unwrap_or((0, 0f64));
             let posts = topic.get_posts()?;
             let mut reports_info = HashMap::new();
             for post in posts.iter().skip(1) {
@@ -222,7 +218,7 @@ impl<'a> SummaryReport<'a> {
                             .map(|p| p.get_stored_torrents())
                             .flatten()
                             .collect();
-                        Report::new(self.api, report.forum, id)
+                        Report::new(self.db, report.forum, id)
                             .map(|r| (r.id.len(), r.size))
                             .unwrap_or((0, 0f64))
                     }));
@@ -276,7 +272,7 @@ impl<'a> SummaryReport<'a> {
         );
         let tpocis = self.get_topics(
             &keeper_forum,
-            self.report.iter().map(|r| &r.forum).collect(),
+            &self.report.iter().map(|r| r.forum).collect::<Vec<usize>>(),
         )?;
         let mut vec = Vec::with_capacity(tpocis.len());
         for report in &self.report {

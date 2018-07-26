@@ -1,6 +1,5 @@
 //! A module to access Rutracker API
 
-use database::{self, DBName, Database};
 use reqwest::{self, Client, IntoUrl, Url};
 use std::collections::HashMap;
 
@@ -33,12 +32,6 @@ quick_error! {
                 method,
                 err.code,
                 err.text)
-        }
-        Database (err: database::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
         }
     }
 }
@@ -140,38 +133,23 @@ pub struct Response<T: Default> {
 }
 
 #[derive(Debug)]
-pub struct RutrackerApi<'a> {
+pub struct RutrackerApi {
     url: Url,
     http_client: Client,
     limit: usize,
-    db: &'a Database,
 }
 
 macro_rules! dynamic {
     ($name:ident, $arrayname:ident : $arraytype:ty, $key:ty, $value:ty) => {
-        pub fn $name(&self, $arrayname: Vec<$arraytype>, db_name: Option<DBName>) -> Result<HashMap<$key, $value>>
+        pub fn $name(&self, $arrayname: Vec<$arraytype>) -> Result<HashMap<$key, $value>>
         {
-            let (mut result, buf): (HashMap<$key, $value>, Vec<$arraytype>) = if let Some(db) = db_name {
-                let result: HashMap<$arraytype, Option<$value>> = self.db.get_map(db, $arrayname)?;
-                let buf = result
-                    .iter()
-                    .filter(|(_, v)| v.is_none())
-                    .map(|(&k, _)| k)
-                    .collect();
-                let result = result
-                    .into_iter()
-                    .filter_map(|(k, v)| Some((k.to_owned(), v?)))
-                    .collect();
-                (result, buf)
-            } else {
-                (HashMap::new(), $arrayname)
-            };
             let base_url = {
                 let mut url = self.url.join(concat!("v1/", stringify!($name)))?;
                 url.query_pairs_mut().append_pair("by", stringify!($arrayname));
                 url
             };
-            for chunk in buf.chunks(self.limit) {
+            let mut result = HashMap::new();
+            for chunk in $arrayname.chunks(self.limit) {
                 let val = chunk.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",");
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
@@ -179,15 +157,7 @@ macro_rules! dynamic {
                 let res: Response<HashMap<$key, Option<$value>>> = self.http_client.get(url).send()?.json()?;
                 match res.error {
                     None => {
-                        let res = res.result.into_iter().filter_map(|(k, v)| Some((k, v?))).collect();
-                        let location = concat!("RutrackerApi::", stringify!($name), "::reponse");
-                        for (k,v) in &res {
-                            trace!("{}", location; "value" => ?v, "key" => k);
-                        }
-                        if let Some(name) = db_name {
-                            self.db.put_map(name, &res)?;
-                        }
-                        result.extend(res.into_iter());
+                        result.extend(res.result.into_iter().filter_map(|(k, v)| Some((k, v?))));
                     },
                     Some(err) => return Err(Error::ApiError(stringify!($name), err)),
                 }
@@ -197,14 +167,13 @@ macro_rules! dynamic {
     }
 }
 
-impl<'a> RutrackerApi<'a> {
-    pub fn new<S: IntoUrl>(url: S, db: &'a Database) -> Result<Self> {
+impl RutrackerApi {
+    pub fn new<S: IntoUrl>(url: S) -> Result<Self> {
         let url = url.into_url()?;
         let api = RutrackerApi {
             limit: RutrackerApi::get_limit(&url)?,
             url,
             http_client: Client::new(),
-            db,
         };
         debug!("RutrackerApi::new::api: {:?}", api);
         Ok(api)
@@ -236,7 +205,7 @@ impl<'a> RutrackerApi<'a> {
     }
 
     /// Get peer stats for all topics of the sub-forum
-    pub fn pvc(&self, forum_id: usize, topic_id: &[usize]) -> Result<HashMap<usize, TopicInfo>> {
+    pub fn pvc(&self, forum_id: usize) -> Result<HashMap<usize, TopicInfo>> {
         let url = self
             .url
             .join("v1/static/pvc/f/")?
@@ -244,23 +213,11 @@ impl<'a> RutrackerApi<'a> {
         trace!("RutrackerApi::pvc::url {:?}", url);
         let res: Response<HashMap<usize, OptionInfo>> = self.http_client.get(url).send()?.json()?;
         match res.error {
-            None => {
-                let mut map = res
-                    .result
-                    .into_iter()
-                    .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
-                    .collect();
-                for (id, info) in &map {
-                    trace!("RutrackerApi::pvc::topic"; "info" => ?info, "id" => id);
-                }
-                self.db.put_map(DBName::TopicInfo, &map)?;
-                let vec: Vec<usize> = map.iter().map(|(k, _)| *k).collect();
-                self.db.put(DBName::SubforumList, &forum_id, &vec)?;
-                if !topic_id.is_empty() {
-                    map.retain(|id, _| topic_id.contains(id));
-                }
-                Ok(map)
-            }
+            None => Ok(res
+                .result
+                .into_iter()
+                .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
+                .collect()),
             Some(err) => Err(Error::ApiError("pvc", err)),
         }
     }
