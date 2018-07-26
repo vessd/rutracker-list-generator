@@ -5,3 +5,4 @@
 !Cargo.lock
 !LICENSE
 !README.md
+!rustfmt.toml
