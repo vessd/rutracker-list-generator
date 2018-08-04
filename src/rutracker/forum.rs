@@ -37,7 +37,6 @@ quick_error! {
             description("keys not found")
             display("keys not found")
         }
-        User
         Unexpected {
             description("unexpected error")
             display("unexpected error")
@@ -219,20 +218,31 @@ impl<'a> Post<'a> {
     }
 
     pub fn get_stored_torrents_info(&self) -> Option<(usize, f64)> {
-        let node = self
-            .body
-            .as_node()
-            .children()
-            .filter(|n| n.as_text().is_some())
-            .find(|n| {
-                n.as_text().unwrap().borrow().trim().starts_with(
+        let node = debug_option!(
+            self.body
+                .as_node()
+                .children()
+                .filter(|n| n.as_text().is_some())
+                .find(|n| n.as_text().unwrap().borrow().trim().starts_with(
                     "Всего хранимых раздач в подразделе:",
-                )
-            })?;
+                )),
+            "Не удалось распознать информацию о \
+             хранимых торрентах, пост: {}, автор: {}",
+            self.id,
+            self.author
+        );
         let s = node.as_text().unwrap().borrow();
         let mut s = s.split_whitespace();
-        let count = s.nth(5)?.parse().ok()?;
-        let mut size = s.nth(2)?.parse().ok()?;
+        let count = debug_try!(
+            s.nth(5)?.parse(),
+            return None,
+            "Количество раздач не распознано: {}"
+        );
+        let mut size = debug_try!(
+            s.nth(2)?.parse(),
+            return None,
+            "Размер раздач не распознан: {}"
+        );
         match s.next()? {
             "KB" => size *= 10f64.exp2(),
             "MB" => size *= 20f64.exp2(),
@@ -448,7 +458,8 @@ pub struct RutrackerForum {
 }
 
 impl RutrackerForum {
-    pub fn new(user: User, config: &ForumConfig) -> Result<Self> {
+    pub fn new(config: &ForumConfig) -> Result<Self> {
+        let user = User::new(config)?;
         let url = config.url.clone();
         let proxy = config.proxy.as_ref();
         let mut headers = Headers::new();
@@ -493,7 +504,7 @@ impl RutrackerForum {
             .ok()
     }
 
-    fn encode(vec: &[(&str, &str)]) -> String {
+    pub fn encode(vec: &[(&str, &str)]) -> String {
         form_urlencoded::Serializer::new(String::new())
             .custom_encoding_override(|s| WINDOWS_1251.encode(s).0)
             .extend_pairs(vec)

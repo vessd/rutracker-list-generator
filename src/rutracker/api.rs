@@ -153,7 +153,7 @@ macro_rules! dynamic {
                 let val = chunk.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",");
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
-                trace!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);
+                debug!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);
                 let res: Response<HashMap<$key, Option<$value>>> = self.http_client.get(url).send()?.json()?;
                 match res.error {
                     None => {
@@ -196,7 +196,6 @@ impl RutrackerApi {
 
     pub fn forum_size(&self) -> Result<HashMap<usize, (usize, f64)>> {
         let url = self.url.join("v1/static/forum_size")?;
-        trace!("RutrackerApi::forum_size::url {:?}", url);
         let res: Response<HashMap<_, _>> = self.http_client.get(url).send()?.json()?;
         match res.error {
             None => Ok(res.result),
@@ -210,7 +209,6 @@ impl RutrackerApi {
             .url
             .join("v1/static/pvc/f/")?
             .join(forum_id.to_string().as_str())?;
-        trace!("RutrackerApi::pvc::url {:?}", url);
         let res: Response<HashMap<usize, OptionInfo>> = self.http_client.get(url).send()?.json()?;
         match res.error {
             None => Ok(res

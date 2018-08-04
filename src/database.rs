@@ -75,7 +75,7 @@ impl Database {
         let local_list = env.create_db(Some("local_list"), lmdb::DatabaseFlags::empty())?;
         let keeper_list = env.create_db(Some("keeper_list"), lmdb::DatabaseFlags::empty())?;
 
-        Ok(Database {
+        let database = Database {
             api,
             env,
             forum_name,
@@ -86,7 +86,13 @@ impl Database {
             topic_data,
             local_list,
             keeper_list,
-        })
+        };
+
+        database.clear_db(DBName::ForumList)?;
+        database.clear_db(DBName::TopicInfo)?;
+        database.clear_db(DBName::LocalList)?;
+
+        Ok(database)
     }
 
     fn get_db(&self, db_name: DBName) -> lmdb::Database {

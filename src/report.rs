@@ -40,9 +40,6 @@ pub struct Report {
 
 impl Report {
     pub fn new(db: &Database, forum: usize, id: Vec<usize>) -> Result<Self> {
-        for id in &id {
-            trace!("Report::new"; "id" => id);
-        }
         let size = db
             .get_tor_topic_data(&id)?
             .iter()
@@ -249,17 +246,18 @@ impl<'a> SummaryReport<'a> {
                 message.push_str(
                     format!(
                         "Хранитель {}: \
-                         [url=profile.php?mode=viewprofile&u={}&name=1]\
-                         [u][color=#006699]{1}[/u][/color][/url] \
+                         [url=profile.php?mode=viewprofile&{}&name=1]\
+                         [u][color=#006699]{}[/u][/color][/url] \
                          [color=gray]~>[/color] {} шт. [color=gray]~>[/color] {}\n",
                         num + 1,
+                        RutrackerForum::encode(&[("u", name)]),
                         name,
                         report.0,
                         Report::convert_size(report.1)
                     ).as_str(),
                 );
             }
-            trace!("{}", message);
+            debug!("{}", message);
             posts[0].edit(message.as_str())?;
         }
         Ok(post_id)

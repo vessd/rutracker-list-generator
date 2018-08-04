@@ -63,37 +63,31 @@ impl Client {
     }
 
     fn start(&mut self, ids: &[usize]) -> usize {
-        match self.client.start(&self.get_hashs(ids)) {
-            Ok(()) => (),
-            Err(err) => {
-                error!("Client::start {}", err);
-                return 0;
-            }
-        }
+        error_try!(
+            self.client.start(&self.get_hashs(ids)),
+            return 0,
+            "Не удалось запустить раздачи: {}"
+        );
         self.set_status(TorrentStatus::Seeding, ids);
         ids.iter().count()
     }
 
     fn stop(&mut self, ids: &[usize]) -> usize {
-        match self.client.stop(&self.get_hashs(ids)) {
-            Ok(()) => (),
-            Err(err) => {
-                error!("Client::stop {}", err);
-                return 0;
-            }
-        }
+        error_try!(
+            self.client.stop(&self.get_hashs(ids)),
+            return 0,
+            "Не удалось остановить раздачи: {}"
+        );
         self.set_status(TorrentStatus::Stopped, ids);
         ids.iter().count()
     }
 
     fn remove(&mut self, ids: &[usize]) -> usize {
-        match self.client.remove(&self.get_hashs(ids), true) {
-            Ok(()) => (),
-            Err(err) => {
-                error!("Client::remove {}", err);
-                return 0;
-            }
-        }
+        error_try!(
+            self.client.remove(&self.get_hashs(ids), true),
+            return 0,
+            "Не удалось удалить раздачи: {}"
+        );
         for id in ids {
             self.list.remove(id);
         }
@@ -127,15 +121,9 @@ impl<'a> Control<'a> {
 
     pub fn add_client(&mut self, client: Box<dyn TorrentClient>) -> Result<()> {
         let list = client.list()?;
-        for torrent in &list {
-            trace!("Control::add_client::torrent"; "status" => ?torrent.status, "hash" => &torrent.hash);
-        }
         let mut ids = self
             .db
             .get_topic_id(list.iter().map(|t| t.hash.as_str()).collect::<Vec<&str>>())?;
-        for (hash, id) in &ids {
-            trace!("Control::add_client::torrent"; "id" => id, "hash" => hash);
-        }
         let client = Client {
             list: list
                 .into_iter()
@@ -143,10 +131,6 @@ impl<'a> Control<'a> {
                 .collect(),
             client,
         };
-        trace!("Control::add_client::client"; "client" => ?&client.client);
-        for (id, t) in &client.list {
-            trace!("Control::add_client::client"; "status" => ?t.status, "hash" => &t.hash, "id" => id);
-        }
         self.clients.push(client);
         Ok(())
     }

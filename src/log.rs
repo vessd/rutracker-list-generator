@@ -2,9 +2,20 @@ use chrono::Local;
 use config::{Log, LogDestination};
 use slog::{self, Drain, Level};
 use slog_async::{Async, OverflowStrategy};
-use slog_term::{self, FullFormat, PlainDecorator, TermDecorator};
+use slog_term::{self, FullFormat, PlainDecorator, PlainSyncDecorator, TermDecorator};
 use std::fs::{File, OpenOptions};
 use std::io;
+
+pub fn pre_init() -> slog::Logger {
+    let decorator = PlainSyncDecorator::new(io::stdout());
+    let drain = FullFormat::new(decorator)
+        .use_custom_timestamp(move |io: &mut dyn io::Write| {
+            write!(io, "{}", Local::now().format("%T"))
+        })
+        .build()
+        .fuse();
+    slog::Logger::root(drain, o!())
+}
 
 pub fn init(config: &Log) -> io::Result<slog::Logger> {
     let level = match config.level {
@@ -59,10 +70,7 @@ enum Decorator {
 
 impl slog_term::Decorator for Decorator {
     fn with_record<F>(
-        &self,
-        record: &slog::Record,
-        logger_values: &slog::OwnedKVList,
-        f: F,
+        &self, record: &slog::Record, logger_values: &slog::OwnedKVList, f: F,
     ) -> io::Result<()>
     where
         F: FnOnce(&mut dyn slog_term::RecordDecorator) -> io::Result<()>,
@@ -72,6 +80,48 @@ impl slog_term::Decorator for Decorator {
             Decorator::PlainStdout(ref d) => d.with_record(record, logger_values, f),
             Decorator::PlainStderr(ref d) => d.with_record(record, logger_values, f),
             Decorator::File(ref d) => d.with_record(record, logger_values, f),
+        }
+    }
+}
+
+macro_rules! log_try {
+    ($level:ident, $expr:expr, $retexpr:expr, $fmt:expr $(, $args:expr)*) => {
+        match $expr {
+            Ok(val) => val,
+            Err(err) => {
+                $level!($fmt, err $(, $args)*);
+                $retexpr;
+            }
+        }
+    }
+}
+
+macro_rules! crit_try {
+    ($expr:expr, $fmt:expr $(, $args:expr)*) => {
+        log_try!(crit, $expr, return 1, $fmt $(, $args)*)
+    }
+}
+
+macro_rules! error_try {
+    ($expr:expr, $retexpr:expr, $fmt:expr $(, $args:expr)*) => {
+        log_try!(error, $expr, $retexpr, $fmt $(, $args)*)
+    }
+}
+
+macro_rules! debug_try {
+    ($expr:expr, $retexpr:expr, $fmt:expr $(, $args:expr)*) => {
+        log_try!(debug, $expr, $retexpr, $fmt $(, $args)*)
+    }
+}
+
+macro_rules! debug_option {
+    ($expr:expr, $fmt:expr $(, $args:expr)*) => {
+        match $expr {
+            Some(val) => val,
+            None => {
+                debug!($fmt $(, $args)*);
+                return None;
+            }
         }
     }
 }

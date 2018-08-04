@@ -1,3 +1,5 @@
+pub type Result<T> = ::std::result::Result<T, Error>;
+
 quick_error! {
     #[derive(Debug)]
     pub enum Error {}
@@ -7,7 +9,7 @@ quick_error! {
 pub struct Deluge;
 
 impl Deluge {
-    pub fn new() -> Self {
-        Deluge
+    pub fn new() -> Result<Self> {
+        Ok(Deluge)
     }
 }
