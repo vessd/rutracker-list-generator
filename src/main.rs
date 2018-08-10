@@ -37,7 +37,7 @@ mod rutracker;
 
 use config::{ClientName, Config};
 use control::Control;
-use report::{Report, SummaryReport};
+use report::{List, Report};
 use rutracker::{RutrackerApi, RutrackerForum};
 
 fn run() -> i32 {
@@ -105,7 +105,7 @@ fn run() -> i32 {
             "Авторизация на форуме завершилась с ошибкой: {}"
         );
         info!("Сборка сводного отчёта...");
-        let mut sumrep = SummaryReport::new(&database, &forum);
+        let mut report = Report::new(&database, &forum);
         for subforum in &config.subforum {
             for id in &subforum.ids {
                 let topic_id: Vec<usize> = error_try!(
@@ -123,17 +123,17 @@ fn run() -> i32 {
                         id
                     );
                 }
-                let report = error_try!(
-                    Report::new(&database, *id, topic_id),
+                let list = error_try!(
+                    List::new(&database, *id, topic_id),
                     continue,
                     "Для хранимых раздач из подраздела {1} не удалось получить информацию: {}",
                     id
                 );
-                sumrep.add_report(report);
+                report.add_list(list);
             }
         }
         info!("Отправка списков на форум...");
-        crit_try!(sumrep.send(), "Не удалось отправить списки хранимых раздач на форум: {}");
+        crit_try!(report.send_all(), "Не удалось отправить списки хранимых раздач на форум: {}");
     }
     info!("Готово!");
     0

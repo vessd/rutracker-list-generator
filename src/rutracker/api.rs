@@ -209,6 +209,7 @@ impl RutrackerApi {
             .url
             .join("v1/static/pvc/f/")?
             .join(forum_id.to_string().as_str())?;
+        debug!("RutrackerApi::pvc::url: {}", url);
         let res: Response<HashMap<usize, OptionInfo>> = self.http_client.get(url).send()?.json()?;
         match res.error {
             None => Ok(res

@@ -5,7 +5,8 @@ use kuchiki::traits::TendrilSink;
 use kuchiki::{self, ElementData, NodeDataRef, NodeRef};
 use reqwest::header::{ContentType, Cookie, Headers, SetCookie};
 use reqwest::{Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode};
-use std::collections::HashMap;
+use std::collections::HashSet;
+use std::iter::FromIterator;
 use url::form_urlencoded;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -217,42 +218,6 @@ impl<'a> Post<'a> {
             .collect()
     }
 
-    pub fn get_stored_torrents_info(&self) -> Option<(usize, f64)> {
-        let node = debug_option!(
-            self.body
-                .as_node()
-                .children()
-                .filter(|n| n.as_text().is_some())
-                .find(|n| n.as_text().unwrap().borrow().trim().starts_with(
-                    "Всего хранимых раздач в подразделе:",
-                )),
-            "Не удалось распознать информацию о \
-             хранимых торрентах, пост: {}, автор: {}",
-            self.id,
-            self.author
-        );
-        let s = node.as_text().unwrap().borrow();
-        let mut s = s.split_whitespace();
-        let count = debug_try!(
-            s.nth(5)?.parse(),
-            return None,
-            "Количество раздач не распознано: {}"
-        );
-        let mut size = debug_try!(
-            s.nth(2)?.parse(),
-            return None,
-            "Размер раздач не распознан: {}"
-        );
-        match s.next()? {
-            "KB" => size *= 10f64.exp2(),
-            "MB" => size *= 20f64.exp2(),
-            "GB" => size *= 30f64.exp2(),
-            "TB" => size *= 40f64.exp2(),
-            _ => size *= 1f64,
-        }
-        Some((count, size))
-    }
-
     pub fn edit(&self, message: &str) -> Result<()> {
         if message.len() > MESSAGE_LEN {
             return Err(Error::Message);
@@ -318,14 +283,19 @@ impl<'a> Topic<'a> {
         })
     }
 
-    pub fn get_stored_torrents(&self) -> Result<HashMap<String, Vec<usize>>> {
-        let mut map = HashMap::new();
+    pub fn get_stored_torrents(&self) -> Result<(Vec<String>, Vec<HashSet<usize>>)> {
         let posts = self.get_posts()?;
+        let mut keeper = Vec::new();
+        let mut torrent_id: Vec<HashSet<usize>> = Vec::new();
         for p in posts.iter().skip(1) {
-            let keeper = map.entry(p.author.clone()).or_insert_with(Vec::new);
-            keeper.extend(p.get_stored_torrents().into_iter());
+            if let Some(i) = keeper.iter().position(|k| *k == p.author) {
+                torrent_id[i].extend(p.get_stored_torrents().into_iter());
+            } else {
+                keeper.push(p.author.clone());
+                torrent_id.push(HashSet::from_iter(p.get_stored_torrents().into_iter()));
+            }
         }
-        Ok(map)
+        Ok((keeper, torrent_id))
     }
 
     pub fn get_posts(&self) -> Result<Vec<Post>> {
@@ -481,6 +451,17 @@ impl RutrackerForum {
             title: title.into(),
             rutracker: self,
         }
+    }
+
+    pub fn get_keepers_forum(&self) -> Forum {
+        self.get_forum(2156, "Группа \"Хранители\"")
+    }
+
+    pub fn get_keepers_working_forum(&self) -> Forum {
+        self.get_forum(
+            1584,
+            "\"Хранители\" (рабочий подфорум)",
+        )
     }
 
     fn get_text(node: &NodeRef, selectors: &str) -> Option<String> {

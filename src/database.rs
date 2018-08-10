@@ -2,6 +2,7 @@ use bincode::{self, deserialize, serialize};
 use client::TorrentStatus;
 use lmdb::{self, Cursor, Transaction};
 use rutracker::api::{RutrackerApi, TopicData, TopicInfo};
+use rutracker::forum::Forum;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,6 +14,12 @@ quick_error! {
     #[derive(Debug)]
     pub enum Error {
         Api(err: ::rutracker::api::Error) {
+            cause(err)
+            description(err.description())
+            display("{}", err)
+            from()
+        }
+        Forum(err: ::rutracker::forum::Error) {
             cause(err)
             description(err.description())
             display("{}", err)
@@ -37,6 +44,7 @@ quick_error! {
 pub enum DBName {
     ForumName,
     ForumSize,
+    ForumStat,
     ForumList,
     TopicId,
     TopicInfo,
@@ -51,6 +59,7 @@ pub struct Database {
     env: lmdb::Environment,
     forum_name: lmdb::Database,
     forum_size: lmdb::Database,
+    forum_stat: lmdb::Database,
     forum_list: lmdb::Database,
     topic_id: lmdb::Database,
     topic_info: lmdb::Database,
@@ -63,11 +72,12 @@ impl Database {
     pub fn new(api: RutrackerApi) -> Result<Self> {
         let env = lmdb::Environment::new()
             .set_max_readers(1)
-            .set_max_dbs(8)
+            .set_max_dbs(9)
             .set_map_size(10485760 * 10)
             .open(Path::new("db"))?;
         let forum_name = env.create_db(Some("forum_name"), lmdb::DatabaseFlags::empty())?;
         let forum_size = env.create_db(Some("forum_size"), lmdb::DatabaseFlags::empty())?;
+        let forum_stat = env.create_db(Some("forum_stat"), lmdb::DatabaseFlags::empty())?;
         let forum_list = env.create_db(Some("forum_list"), lmdb::DatabaseFlags::empty())?;
         let topic_id = env.create_db(Some("topic_id"), lmdb::DatabaseFlags::empty())?;
         let topic_info = env.create_db(Some("topic_info"), lmdb::DatabaseFlags::empty())?;
@@ -80,6 +90,7 @@ impl Database {
             env,
             forum_name,
             forum_size,
+            forum_stat,
             forum_list,
             topic_id,
             topic_info,
@@ -99,6 +110,7 @@ impl Database {
         match db_name {
             DBName::ForumName => self.forum_name,
             DBName::ForumSize => self.forum_size,
+            DBName::ForumStat => self.forum_stat,
             DBName::ForumList => self.forum_list,
             DBName::TopicId => self.topic_id,
             DBName::TopicInfo => self.topic_info,
@@ -318,5 +330,37 @@ impl Database {
         )?;
         map.retain(|k, _| buf.get(k) == Some(&Some(forum_id)));
         Ok(map)
+    }
+
+    pub fn get_topic_with_subforum_list<'a>(
+        &self,
+        forum: &'a Forum,
+        forum_id: &[usize],
+    ) -> Result<HashMap<usize, (usize, String, String)>> {
+        let buf: HashMap<usize, Option<(usize, String, String)>> =
+            self.get_map(DBName::ForumStat, forum_id)?;
+        if buf.values().any(|v| v.is_none()) {
+            let forum_name = self.get_forum_name(forum_id)?;
+            let mut forum_name: HashMap<&str, usize> =
+                forum_name.iter().map(|(k, v)| (v.as_str(), *k)).collect();
+            let map: HashMap<usize, (usize, String, String)> = forum
+                .get_topics()?
+                .into_iter()
+                .filter_map(|t| {
+                    let forum_id = forum_name.remove(t.title.split(" » ").last()?)?;
+                    Some((forum_id, (t.id, t.author, t.title)))
+                })
+                .collect();
+            self.put_map(DBName::ForumStat, &map)?;
+            Ok(map)
+        } else {
+            Ok(buf
+                .into_iter()
+                .map(|(forum_id, v)| {
+                    let (id, author, title) = v.unwrap();
+                    (forum_id, (id, author, title))
+                })
+                .collect())
+        }
     }
 }
