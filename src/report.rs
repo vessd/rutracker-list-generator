@@ -256,7 +256,7 @@ impl<'a> Report<'a> {
                     format!(
                         "[url=viewtopic.php?p={}#{0}][u]{}[/u][/url] — {} шт. ({})",
                         id,
-                        title,
+                        title.trim_left_matches("[Список] "),
                         count,
                         List::convert_size(size)
                     ).as_str(),
@@ -265,7 +265,7 @@ impl<'a> Report<'a> {
                 message.push_str(
                     format!(
                         "[u]{}[/u] — {} шт. ({})",
-                        title,
+                        title.trim_left_matches("[Список] "),
                         count,
                         List::convert_size(size)
                     ).as_str(),
