@@ -9,56 +9,22 @@ use std::collections::HashSet;
 use std::iter::FromIterator;
 use url::form_urlencoded;
 
-pub type Result<T> = ::std::result::Result<T, Error>;
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
 pub const MESSAGE_LEN: usize = 120_000;
 
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Api(err: super::api::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Cookie {
-            description("cann't get cookie")
-            display("cann't get cookie from Rutracker forum")
-        }
-        Token {
-            description("cann't get token")
-            display("cann't get token from Rutracker forum")
-        }
-        Message {
-            description("message length exceeded")
-            display("message length exceeded")
-        }
-        Keys {
-            description("keys not found")
-            display("keys not found")
-        }
-        Unexpected {
-            description("unexpected error")
-            display("unexpected error")
-        }
-        UnexpectedResponse(status: StatusCode) {
-            description("unexpected response")
-            display("unexpected response from the rutracker forum: {}", status)
-        }
-        Reqwest(err: ::reqwest::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Io(err: ::std::io::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-    }
+#[derive(Debug, Fail)]
+enum ForumError {
+    #[fail(display = "failed to get cookie from header")]
+    CookieNotFound,
+    #[fail(display = "failed to get token from page")]
+    TokenNotFound,
+    #[fail(display = "failed to get keys from page")]
+    KeysNotFound,
+    #[fail(display = "message length exceeded")]
+    MessageLengthExceeded,
+    #[fail(display = "unexpected status code: {}", status)]
+    UnexpectedStatus { status: ::reqwest::StatusCode },
 }
 
 #[derive(Debug)]
@@ -125,8 +91,8 @@ impl User {
             .query(&[("mode", "viewprofile"), ("u", &name)])
             .send()?
             .text()?;
-        let (bt, api, id) = User::get_keys(&page).ok_or(Error::Keys)?;
-        let form_token = User::get_form_token(&page).ok_or(Error::Token)?;
+        let (bt, api, id) = User::get_keys(&page).ok_or(ForumError::KeysNotFound)?;
+        let form_token = User::get_form_token(&page).ok_or(ForumError::TokenNotFound)?;
         Ok(User {
             id,
             name,
@@ -151,7 +117,7 @@ impl User {
         let mut cookie = Cookie::new();
         resp.headers()
             .get::<SetCookie>()
-            .ok_or(Error::Cookie)?
+            .ok_or(ForumError::CookieNotFound)?
             .iter()
             .for_each(|c| {
                 let co = cookie::Cookie::parse(c.as_str()).unwrap();
@@ -220,7 +186,7 @@ impl<'a> Post<'a> {
 
     pub fn edit(&self, message: &str) -> Result<()> {
         if message.len() > MESSAGE_LEN {
-            return Err(Error::Message);
+            return Err(ForumError::MessageLengthExceeded.into());
         }
         let url = format!(
             "{}posting.php?mode=editpost&p={}",
@@ -252,7 +218,9 @@ impl<'a> Post<'a> {
         let resp = requ.send()?;
         match resp.status() {
             StatusCode::Ok => Ok(()),
-            _ => Err(Error::UnexpectedResponse(resp.status())),
+            _ => Err(ForumError::UnexpectedStatus {
+                status: resp.status(),
+            }.into()),
         }
     }
 }
@@ -342,7 +310,7 @@ impl<'a> Topic<'a> {
 
     pub fn reply(&self, message: &str) -> Result<Option<usize>> {
         if message.len() > MESSAGE_LEN {
-            return Err(Error::Message);
+            return Err(ForumError::MessageLengthExceeded.into());
         }
         let url = format!(
             "{}posting.php?mode=reply&t={}",
@@ -369,7 +337,9 @@ impl<'a> Topic<'a> {
             .header(ContentType::form_url_encoded())
             .send()?;
         if resp.status() != StatusCode::Ok {
-            return Err(Error::UnexpectedResponse(resp.status()));
+            return Err(ForumError::UnexpectedStatus {
+                status: resp.status(),
+            }.into());
         }
         let document = kuchiki::parse_html().one(resp.text()?);
         let post_id = match document.select_first(".mrg_16 a") {

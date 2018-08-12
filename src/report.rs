@@ -2,31 +2,7 @@ use chrono::Local;
 use database::Database;
 use rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN};
 
-pub type Result<T> = ::std::result::Result<T, Error>;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Api(err: ::rutracker::api::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Forum(err: ::rutracker::forum::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Database(err: ::database::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-    }
-}
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
 #[derive(Debug)]
 pub struct List {

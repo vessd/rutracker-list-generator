@@ -3,25 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use toml;
 
-pub type Result<T> = ::std::result::Result<T, Error>;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Io(err: ::std::io::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Toml(err: ::toml::de::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-    }
-}
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct User {

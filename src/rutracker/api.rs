@@ -3,37 +3,19 @@
 use reqwest::{self, Client, IntoUrl, Url};
 use std::collections::HashMap;
 
-pub type Result<T> = ::std::result::Result<T, Error>;
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        UrlError(err: ::reqwest::UrlError) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Reqwest(err: ::reqwest::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        SerdeJson(err: ::serde_json::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        ApiError(method: &'static str, err: ResponseError) {
-            description("Rutracker API error")
-            display( "{}: {{ code: {}, text: {} }}",
-                method,
-                err.code,
-                err.text)
-        }
-    }
+#[derive(Debug, Fail)]
+#[fail(
+    display = "Rutracker API responded with an error: {}: {{ code: {}, text: {} }}",
+    method,
+    code,
+    text
+)]
+struct ApiError {
+    method: &'static str,
+    code: u16,
+    text: String,
 }
 
 /// Limit of request.
@@ -159,7 +141,7 @@ macro_rules! dynamic {
                     None => {
                         result.extend(res.result.into_iter().filter_map(|(k, v)| Some((k, v?))));
                     },
-                    Some(err) => return Err(Error::ApiError(stringify!($name), err)),
+                    Some(err) => return Err(ApiError { method: stringify!($name), code: err.code, text: err.text }.into()),
                 }
             }
             Ok(result)
@@ -184,7 +166,11 @@ impl RutrackerApi {
         let res: Response<Limit> = reqwest::get(url.join("v1/get_limit")?)?.json()?;
         match res.error {
             None => Ok(res.result.limit),
-            Some(err) => Err(Error::ApiError("get_limit", err)),
+            Some(err) => Err(ApiError {
+                method: "get_limit",
+                code: err.code,
+                text: err.text,
+            }.into()),
         }
     }
 
@@ -199,7 +185,11 @@ impl RutrackerApi {
         let res: Response<HashMap<_, _>> = self.http_client.get(url).send()?.json()?;
         match res.error {
             None => Ok(res.result),
-            Some(err) => Err(Error::ApiError("pvc", err)),
+            Some(err) => Err(ApiError {
+                method: "forum_size",
+                code: err.code,
+                text: err.text,
+            }.into()),
         }
     }
 
@@ -217,7 +207,11 @@ impl RutrackerApi {
                 .into_iter()
                 .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
                 .collect()),
-            Some(err) => Err(Error::ApiError("pvc", err)),
+            Some(err) => Err(ApiError {
+                method: "pvc",
+                code: err.code,
+                text: err.text,
+            }.into()),
         }
     }
 }

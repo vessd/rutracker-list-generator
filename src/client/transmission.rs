@@ -3,43 +3,16 @@ use reqwest::{self, Client, IntoUrl, StatusCode, Url};
 use serde_json::Value;
 use std::{fmt, result};
 
-pub type Result<T> = result::Result<T, Error>;
+pub type Result<T> = result::Result<T, ::failure::Error>;
 
-quick_error!{
-    #[derive(Debug)]
-    pub enum Error {
-        Reqwest(err: ::reqwest::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        SerdeJson(err: ::serde_json::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        UrlError(err: ::reqwest::UrlError) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        ParseIdError {
-            description("failed to parse id")
-            display("failed to extract a identifier from the response header")
-
-        }
-        UnexpectedResponse(status: ::reqwest::StatusCode) {
-            description("unexpected response")
-            display("unexpected response from the transmission server: {}", status)
-        }
-        TransmissionError(err: String) {
-            description("transmission error")
-            display("the transmission server responded with an error: {}", err)
-        }
-    }
+#[derive(Debug, Fail)]
+enum TransmissionError {
+    #[fail(display = "failed to get SessionId from header")]
+    SessionIdNotFound,
+    #[fail(display = "unexpected status code: {}", status)]
+    UnexpectedStatus { status: ::reqwest::StatusCode },
+    #[fail(display = "the transmission server responded with an error: {}", error)]
+    ResponseError { error: String },
 }
 
 /// A enum that represents the "ids" field in request body.
@@ -177,7 +150,7 @@ macro_rules! empty_response {
         pub fn $name(&self, t: TorrentSelect $(,$argname:$argtype)*) -> Result<()> {
             match self.request(&requ_json!(t,$method $(,$argstring:$argname)*))?.json::<Response>()?.result {
                 ResponseStatus::Success => Ok(()),
-                ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),
+                ResponseStatus::Error(error) => Err(TransmissionError::ResponseError{ error }.into()),
             }
         }
     }
@@ -206,7 +179,7 @@ impl Transmission {
             .send()?
             .headers()
             .get::<SessionId>()
-            .ok_or(Error::ParseIdError)?
+            .ok_or(TransmissionError::SessionIdNotFound)?
             .clone();
         Ok(Transmission {
             url,
@@ -230,7 +203,9 @@ impl Transmission {
             .send()?;
         match resp.status() {
             StatusCode::Ok => Ok(resp),
-            _ => Err(Error::UnexpectedResponse(resp.status())),
+            _ => Err(TransmissionError::UnexpectedStatus {
+                status: resp.status(),
+            }.into()),
         }
     }
 
@@ -250,7 +225,7 @@ impl Transmission {
             .json::<Response>()?;
         match responce.result {
             ResponseStatus::Success => Ok(responce.arguments.torrents),
-            ResponseStatus::Error(err) => Err(Error::TransmissionError(err)),
+            ResponseStatus::Error(error) => Err(TransmissionError::ResponseError { error }.into()),
         }
     }
 }

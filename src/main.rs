@@ -5,11 +5,11 @@ extern crate chrono;
 extern crate cookie;
 extern crate encoding_rs;
 #[macro_use]
+extern crate failure;
+#[macro_use]
 extern crate hyper;
 extern crate kuchiki;
 extern crate lmdb;
-#[macro_use]
-extern crate quick_error;
 extern crate reqwest;
 extern crate serde;
 #[macro_use]

@@ -1,29 +1,11 @@
-use client::{self, Torrent, TorrentClient, TorrentStatus};
+use client::{Torrent, TorrentClient, TorrentStatus};
 use config::Subforum;
 use database::{DBName, Database};
 use rutracker::api::TopicInfo;
 use std::collections::HashMap;
 
-pub type Result<T> = ::std::result::Result<T, Error>;
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 type TopicInfoMap = HashMap<usize, TopicInfo>;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Client(err: client::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Database(err: ::database::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-    }
-}
 
 #[derive(Debug)]
 struct Client {

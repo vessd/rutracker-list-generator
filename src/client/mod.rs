@@ -8,25 +8,7 @@ pub use self::transmission::Transmission;
 
 use self::transmission::{ArgGet, DeleteLocalData, TorrentSelect, TorrentStatus as TStatus};
 
-pub type Result<T> = ::std::result::Result<T, Error>;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Transmission(err: self::transmission::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Deluge(err: self::deluge::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-    }
-}
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
 /// Torrent
 #[derive(Debug, Clone)]

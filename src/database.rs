@@ -1,4 +1,4 @@
-use bincode::{self, deserialize, serialize};
+use bincode::{deserialize, serialize};
 use client::TorrentStatus;
 use lmdb::{self, Cursor, Transaction};
 use rutracker::api::{RutrackerApi, TopicData, TopicInfo};
@@ -8,37 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::{cmp::Eq, hash::Hash};
 
-pub type Result<T> = ::std::result::Result<T, Error>;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Api(err: ::rutracker::api::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Forum(err: ::rutracker::forum::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Lmdb(err: lmdb::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-        Bincode(err: bincode::Error) {
-            cause(err)
-            description(err.description())
-            display("{}", err)
-            from()
-        }
-    }
-}
+pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DBName {
