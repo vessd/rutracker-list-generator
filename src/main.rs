@@ -101,7 +101,7 @@ fn run() -> i32 {
     if let Some(forum) = config.forum {
         info!("Авторизация на форуме...");
         let forum = crit_try!(
-            RutrackerForum::new(&forum),
+            RutrackerForum::new(&forum, config.dry_run),
             "Авторизация на форуме завершилась с ошибкой: {}"
         );
         info!("Сборка сводного отчёта...");

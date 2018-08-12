@@ -188,6 +188,9 @@ impl<'a> Post<'a> {
         if message.len() > MESSAGE_LEN {
             return Err(ForumError::MessageLengthExceeded.into());
         }
+        if self.topic.forum.rutracker.dry_run {
+            return Ok(());
+        }
         let url = format!(
             "{}posting.php?mode=editpost&p={}",
             self.topic.forum.rutracker.url, self.id
@@ -212,10 +215,15 @@ impl<'a> Post<'a> {
                 self.topic.forum.rutracker.user.form_token.as_str(),
             ),
         ]);
-        let mut requ = self.topic.forum.rutracker.client.post(url.as_str());
-        requ.body(params).header(ContentType::form_url_encoded());
-        trace!("{:#?}", requ);
-        let resp = requ.send()?;
+        let resp = self
+            .topic
+            .forum
+            .rutracker
+            .client
+            .post(url.as_str())
+            .body(params)
+            .header(ContentType::form_url_encoded())
+            .send()?;
         match resp.status() {
             StatusCode::Ok => Ok(()),
             _ => Err(ForumError::UnexpectedStatus {
@@ -312,6 +320,9 @@ impl<'a> Topic<'a> {
         if message.len() > MESSAGE_LEN {
             return Err(ForumError::MessageLengthExceeded.into());
         }
+        if self.forum.rutracker.dry_run {
+            return Ok(None);
+        }
         let url = format!(
             "{}posting.php?mode=reply&t={}",
             self.forum.rutracker.url, self.id
@@ -395,10 +406,11 @@ pub struct RutrackerForum {
     pub user: User,
     client: Client,
     url: String,
+    dry_run: bool,
 }
 
 impl RutrackerForum {
-    pub fn new(config: &ForumConfig) -> Result<Self> {
+    pub fn new(config: &ForumConfig, dry_run: bool) -> Result<Self> {
         let user = User::new(config)?;
         let url = config.url.clone();
         let proxy = config.proxy.as_ref();
@@ -412,7 +424,12 @@ impl RutrackerForum {
         } else {
             ClientBuilder::new().default_headers(headers).build()?
         };
-        Ok(RutrackerForum { client, url, user })
+        Ok(RutrackerForum {
+            client,
+            url,
+            user,
+            dry_run,
+        })
     }
 
     pub fn get_forum<T: Into<String>>(&self, id: usize, title: T) -> Forum {
