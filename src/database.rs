@@ -69,6 +69,7 @@ impl Database {
             keeper_list,
         };
 
+        database.clear_db(DBName::ForumSize)?;
         database.clear_db(DBName::ForumList)?;
         database.clear_db(DBName::TopicInfo)?;
         database.clear_db(DBName::LocalList)?;

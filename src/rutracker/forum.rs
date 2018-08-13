@@ -5,8 +5,6 @@ use kuchiki::traits::TendrilSink;
 use kuchiki::{self, ElementData, NodeDataRef, NodeRef};
 use reqwest::header::{ContentType, Cookie, Headers, SetCookie};
 use reqwest::{Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode};
-use std::collections::HashSet;
-use std::iter::FromIterator;
 use url::form_urlencoded;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
@@ -259,16 +257,16 @@ impl<'a> Topic<'a> {
         })
     }
 
-    pub fn get_stored_torrents(&self) -> Result<(Vec<String>, Vec<HashSet<usize>>)> {
+    pub fn get_stored_torrents(&self) -> Result<(Vec<String>, Vec<Vec<usize>>)> {
         let posts = self.get_posts()?;
         let mut keeper = Vec::new();
-        let mut torrent_id: Vec<HashSet<usize>> = Vec::new();
+        let mut torrent_id: Vec<Vec<usize>> = Vec::new();
         for p in posts.iter().skip(1) {
             if let Some(i) = keeper.iter().position(|k| *k == p.author) {
                 torrent_id[i].extend(p.get_stored_torrents().into_iter());
             } else {
                 keeper.push(p.author.clone());
-                torrent_id.push(HashSet::from_iter(p.get_stored_torrents().into_iter()));
+                torrent_id.push(p.get_stored_torrents());
             }
         }
         Ok((keeper, torrent_id))

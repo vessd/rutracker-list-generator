@@ -1,5 +1,5 @@
 use chrono::Local;
-use database::Database;
+use database::{DBName, Database};
 use rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN};
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
@@ -134,6 +134,9 @@ impl<'a> Report<'a> {
         info!("Формирование статиски подраздела...");
         let forum_size = self.db.get_forum_size(forum_id)?.unwrap_or((0, 0f64));
         let (keeper, torrent_id) = topic.get_stored_torrents()?;
+        for (i, k) in keeper.iter().enumerate() {
+            self.db.put(DBName::KeeperList, k, &torrent_id[i])?;
+        }
         let mut torrent: Vec<usize> = torrent_id.iter().flat_map(|id| id).cloned().collect();
         torrent.sort();
         torrent.dedup();
