@@ -187,6 +187,10 @@ impl<'a> Post<'a> {
             return Err(ForumError::MessageLengthExceeded.into());
         }
         if self.topic.forum.rutracker.dry_run {
+            info!(
+                "Сообщение id {} будет изменено:\n{}",
+                self.id, message
+            );
             return Ok(());
         }
         let url = format!(
@@ -319,6 +323,10 @@ impl<'a> Topic<'a> {
             return Err(ForumError::MessageLengthExceeded.into());
         }
         if self.forum.rutracker.dry_run {
+            info!(
+                "В тему {} будет добавлено сообщение:\n {}",
+                self.title, message
+            );
             return Ok(None);
         }
         let url = format!(

@@ -182,7 +182,6 @@ impl<'a> Report<'a> {
                 ).as_str(),
             );
         }
-        debug!("{}", message);
         post.edit(message.as_str())?;
         Ok(())
     }
@@ -275,7 +274,6 @@ impl<'a> Report<'a> {
                 );
             }
         }
-        debug!("{}", message);
         let keepers_forum = self.forum.get_keepers_forum();
         let summary_report = keepers_forum.get_topic(
             4275633,
