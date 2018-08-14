@@ -73,24 +73,26 @@ pub struct Client {
     pub user: Option<User>,
 }
 
-impl Default for Client {
-    fn default() -> Self {
-        Client {
-            name: ClientName::Transmission,
-            host: "localhost".to_string(),
-            port: 9091,
-            user: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct Subforum {
     pub ids: Vec<usize>,
+    #[serde(default = "remove")]
     pub remove: usize,
+    #[serde(default = "stop")]
     pub stop: usize,
+    #[serde(default = "download")]
     pub download: usize,
+}
+
+fn remove() -> usize {
+    11
+}
+
+fn stop() -> usize {
+    5
+}
+fn download() -> usize {
+    2
 }
 
 impl Default for Subforum {
@@ -105,36 +107,25 @@ impl Default for Subforum {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
 pub struct Config {
     pub subforum: Vec<Subforum>,
+    #[serde(default)]
     pub ignored_id: Vec<usize>,
+    #[serde(default)]
     pub log: Log,
     pub client: Vec<Client>,
-    pub forum: Option<ForumConfig>,
+    pub forum: ForumConfig,
+    #[serde(default = "api_url")]
     pub api_url: String,
+    #[serde(default)]
     pub dry_run: bool,
 }
 
-impl Default for Config {
-    fn default() -> Config {
-        Config {
-            subforum: Vec::new(),
-            ignored_id: Vec::new(),
-            log: Log::default(),
-            client: vec![Client::default()],
-            forum: None,
-            api_url: String::from("https://api.t-ru.org/"),
-            dry_run: false,
-        }
-    }
+fn api_url() -> String {
+    String::from("https://api.t-ru.org/")
 }
 
 impl Config {
-    pub fn new() -> Self {
-        Config::default()
-    }
-
     pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
         Ok(toml::from_slice(&fs::read(path.into())?)?)
     }

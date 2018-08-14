@@ -77,27 +77,27 @@ pub struct TopicData {
 pub struct TopicInfo {
     pub tor_status: usize,
     pub seeders: usize,
-    pub reg_time: usize,
+    pub reg_time: i64,
 }
 
-struct OptionInfo(Option<TopicInfo>);
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OptionInfo {
+    None(),
+    Some((usize, usize, i64)),
+}
 
-impl<'de> ::serde::Deserialize<'de> for OptionInfo {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        ::serde::Deserialize::deserialize(deserializer).map(|info: Vec<usize>| {
-            if info.len() == 3 {
-                OptionInfo(Some(TopicInfo {
-                    tor_status: info[0],
-                    seeders: info[1],
-                    reg_time: info[2],
-                }))
-            } else {
-                OptionInfo(None)
-            }
-        })
+impl From<OptionInfo> for Option<TopicInfo> {
+    fn from(info: OptionInfo) -> Self {
+        if let OptionInfo::Some((tor_status, seeders, reg_time)) = info {
+            Some(TopicInfo {
+                tor_status,
+                seeders,
+                reg_time,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -205,7 +205,10 @@ impl RutrackerApi {
             None => Ok(res
                 .result
                 .into_iter()
-                .filter_map(|(k, OptionInfo(v))| Some((k, v?)))
+                .filter_map(|(k, v)| {
+                    let v: Option<_> = v.into();
+                    Some((k, v?))
+                })
                 .collect()),
             Some(err) => Err(ApiError {
                 method: "pvc",

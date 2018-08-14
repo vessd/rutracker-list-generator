@@ -138,7 +138,7 @@ impl<'a> Report<'a> {
             self.db.put(DBName::KeeperList, k, &torrent_id[i])?;
         }
         let mut torrent: Vec<usize> = torrent_id.iter().flat_map(|id| id).cloned().collect();
-        torrent.sort();
+        torrent.sort_unstable();
         torrent.dedup();
         let torrent_info = self.db.get_tor_topic_data(torrent)?;
         let count = torrent_info.len();

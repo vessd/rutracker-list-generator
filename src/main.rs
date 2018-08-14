@@ -32,11 +32,13 @@ mod client;
 mod config;
 mod control;
 mod database;
+mod download;
 mod report;
 mod rutracker;
 
 use config::{ClientName, Config};
 use control::Control;
+use download::Downloader;
 use report::{List, Report};
 use rutracker::{RutrackerApi, RutrackerForum};
 
@@ -90,6 +92,7 @@ fn run() -> i32 {
         );
     }
     control.set_status(client::TorrentStatus::Other, &config.ignored_id);
+
     info!("Приминение настроек...");
     for f in &config.subforum {
         control.apply_config(f);
@@ -98,17 +101,18 @@ fn run() -> i32 {
         control.save_torrents(),
         "Сохранение списка локальных раздач в базу данных завершилось с ошибкой: {}"
     );
-    if let Some(forum) = config.forum {
-        info!("Авторизация на форуме...");
-        let forum = crit_try!(
-            RutrackerForum::new(&forum, config.dry_run),
-            "Авторизация на форуме завершилась с ошибкой: {}"
-        );
-        info!("Сборка сводного отчёта...");
-        let mut report = Report::new(&database, &forum);
-        for subforum in &config.subforum {
-            for id in &subforum.ids {
-                let topic_id: Vec<usize> = error_try!(
+
+    info!("Авторизация на форуме...");
+    let forum = crit_try!(
+        RutrackerForum::new(&config.forum, config.dry_run),
+        "Авторизация на форуме завершилась с ошибкой: {}"
+    );
+
+    info!("Сборка сводного отчёта...");
+    let mut report = Report::new(&database, &forum);
+    for subforum in &config.subforum {
+        for id in &subforum.ids {
+            let topic_id: Vec<usize> = error_try!(
                         database.get_local_by_forum(*id),
                         continue,
                         "Для подраздела {1} не удалось получить списко хранимых раздач: {}",
@@ -117,24 +121,29 @@ fn run() -> i32 {
                     .filter(|(_, status)| *status == client::TorrentStatus::Seeding)
                     .map(|(id, _)| id)
                     .collect();
-                if topic_id.is_empty() {
-                    warn!(
+            if topic_id.is_empty() {
+                warn!(
                         "Список хранимых раздач для подраздела {} пуст",
                         id
                     );
-                }
-                let list = error_try!(
+            }
+            let list = error_try!(
                     List::new(&database, *id, topic_id),
                     continue,
                     "Для хранимых раздач из подраздела {1} не удалось получить информацию: {}",
                     id
                 );
-                report.add_list(list);
-            }
+            report.add_list(list);
         }
-        info!("Отправка списков на форум...");
-        crit_try!(report.send_all(), "Не удалось отправить списки хранимых раздач на форум: {}");
     }
+
+    info!("Отправка списков на форум...");
+    crit_try!(report.send_all(), "Не удалось отправить списки хранимых раздач на форум: {}");
+
+    info!("Формирование списка раздач для загрузки...");
+    let downloader = Downloader::new(&database, &forum, config.ignored_id.to_vec());
+    downloader.get_list_for_download(281, 2).unwrap();
+
     info!("Готово!");
     0
 }
