@@ -70,10 +70,7 @@ enum Decorator {
 
 impl slog_term::Decorator for Decorator {
     fn with_record<F>(
-        &self,
-        record: &slog::Record,
-        logger_values: &slog::OwnedKVList,
-        f: F,
+        &self, record: &slog::Record, logger_values: &slog::OwnedKVList, f: F,
     ) -> io::Result<()>
     where
         F: FnOnce(&mut dyn slog_term::RecordDecorator) -> io::Result<()>,

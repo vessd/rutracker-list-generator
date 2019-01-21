@@ -1,15 +1,14 @@
 #![allow(dead_code)]
+#![allow(proc_macro_derive_resolution_fallback)]
 
-extern crate bincode;
 extern crate chrono;
 extern crate cookie;
+#[macro_use]
+extern crate diesel;
 extern crate encoding_rs;
 #[macro_use]
 extern crate failure;
-#[macro_use]
-extern crate hyper;
 extern crate kuchiki;
-extern crate lmdb;
 extern crate reqwest;
 extern crate serde;
 #[macro_use]
@@ -32,14 +31,14 @@ mod client;
 mod config;
 mod control;
 mod database;
-mod download;
+//mod download;
 mod report;
 mod rutracker;
 
 use config::{ClientName, Config};
 use control::Control;
-use download::Downloader;
-use report::{List, Report};
+//use download::Downloader;
+use report::Report;
 use rutracker::{RutrackerApi, RutrackerForum};
 
 fn run() -> i32 {
@@ -61,88 +60,63 @@ fn run() -> i32 {
         "Соединение с Rutracker API завершилось с ошибкой: {}"
     );
 
-    info!("Подключение к базе данных...");
-    let database = crit_try!(
-        database::Database::new(api),
-        "Подключение к базе данных завершилось с ошибкой: {}"
-    );
-
-    info!("Запрос списка имеющихся раздач...");
-    let mut control = Control::new(&database, config.dry_run);
-    for c in &config.client {
-        let user = c.user.clone().map(|u| (u.name, u.password));
-        error_try!(
-            control.add_client(match c.name {
-                ClientName::Transmission => {
-                    let url = format!("http://{}:{}/transmission/rpc", c.host, c.port);
-                    Box::new(error_try!(
-                    client::Transmission::new(url.as_str(), user),
-                    continue,
-                    "Подключение к Transmission завершилось с ошибкой: {}"
-                ))
-                }
-                ClientName::Deluge => Box::new(error_try!(
-                    client::Deluge::new(),
-                    continue,
-                    "Подключение к Deluge завершилось с ошибкой: {}"
-                )),
-            }),
-            continue,
-            "Получение списка раздач из клиента завершилось с ошибкой: {}"
-        );
-    }
-    control.set_status(client::TorrentStatus::Other, &config.ignored_id);
-
-    info!("Приминение настроек...");
-    for f in &config.subforum {
-        control.apply_config(f);
-    }
-    crit_try!(
-        control.save_torrents(),
-        "Сохранение списка локальных раздач в базу данных завершилось с ошибкой: {}"
-    );
-
     info!("Авторизация на форуме...");
     let forum = crit_try!(
         RutrackerForum::new(&config.forum, config.dry_run),
         "Авторизация на форуме завершилась с ошибкой: {}"
     );
 
-    info!("Сборка сводного отчёта...");
-    let mut report = Report::new(&database, &forum);
-    for subforum in &config.subforum {
-        for id in &subforum.ids {
-            let topic_id: Vec<usize> = error_try!(
-                        database.get_local_by_forum(*id),
-                        continue,
-                        "Для подраздела {1} не удалось получить списко хранимых раздач: {}",
-                        id
-                    ).into_iter()
-                    .filter(|(_, status)| *status == client::TorrentStatus::Seeding)
-                    .map(|(id, _)| id)
-                    .collect();
-            if topic_id.is_empty() {
-                warn!(
-                        "Список хранимых раздач для подраздела {} пуст",
-                        id
-                    );
-            }
-            let list = error_try!(
-                    List::new(&database, *id, topic_id),
-                    continue,
-                    "Для хранимых раздач из подраздела {1} не удалось получить информацию: {}",
-                    id
-                );
-            report.add_list(list);
-        }
+    info!("Подключение к базе данных...");
+    let database = crit_try!(
+           database::Database::new(api, forum),
+           "Подключение к базе данных завершилось с ошибкой: {}"
+       );
+
+    info!("Запрос списка имеющихся раздач...");
+    let mut control = Control::new(&database, config.dry_run);
+    for c in &config.client {
+        let user = c.user.clone().map(|u| (u.name, u.password));
+        crit_try!(
+               control.add_client(match c.name {
+                   ClientName::Transmission => {
+                       let url = format!("http://{}:{}/transmission/rpc", c.host, c.port);
+                       Box::new(error_try!(
+                       client::Transmission::new(url.as_str(), user),
+                       continue,
+                       "Подключение к Transmission завершилось с ошибкой: {}"
+                   ))
+                   }
+                   ClientName::Deluge => Box::new(error_try!(
+                       client::Deluge::new(),
+                       continue,
+                       "Подключение к Deluge завершилось с ошибкой: {}"
+                   )),
+               }),
+               "Получение списка раздач из клиента завершилось с ошибкой: {}"
+           );
     }
+    crit_try!(database.set_status_by_id(client::TorrentStatus::Other as i16, &config.ignored_id),
+              "Не удалось изменить статус для игнорируемых торрентов: {}");
+
+    info!("Приминение настроек...");
+    for f in &config.subforum {
+        control.apply_config(f);
+    }
+
+    info!("Сборка сводного отчёта...");
+    let forum_id = config
+        .subforum
+        .iter()
+        .flat_map(|f| f.id.iter().cloned())
+        .collect();
+    let report = Report::new(&database, forum_id);
 
     info!("Отправка списков на форум...");
     crit_try!(report.send_all(), "Не удалось отправить списки хранимых раздач на форум: {}");
 
-    info!("Формирование списка раздач для загрузки...");
+    /* info!("Формирование списка раздач для загрузки...");
     let downloader = Downloader::new(&database, &forum, config.ignored_id.to_vec());
-    downloader.get_list_for_download(281, 2).unwrap();
+    downloader.get_list_for_download(281, 2).unwrap(); */
 
     info!("Готово!");
     0

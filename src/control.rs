@@ -1,85 +1,12 @@
-use client::{Torrent, TorrentClient, TorrentStatus};
+use client::{TorrentClient, TorrentStatus};
 use config::Subforum;
-use database::{DBName, Database};
-use rutracker::api::TopicInfo;
-use std::collections::HashMap;
+use database::Database;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
-type TopicInfoMap = HashMap<usize, TopicInfo>;
-
-#[derive(Debug)]
-struct Client {
-    list: HashMap<usize, Torrent>,
-    client: Box<dyn TorrentClient>,
-}
-
-impl Client {
-    fn get_ids<T, U>(&self, topics: &TopicInfoMap, seeders: T, status: U) -> Vec<usize>
-    where
-        T: Fn(usize) -> bool,
-        U: Fn(TorrentStatus) -> bool,
-    {
-        topics
-            .iter()
-            .filter(|(_, info)| seeders(info.seeders))
-            .filter_map(|(id, _)| Some((id, self.list.get(id)?.status)))
-            .filter(|(_, s)| status(*s))
-            .map(|(id, _)| id)
-            .cloned()
-            .collect()
-    }
-
-    fn get_hashs(&self, ids: &[usize]) -> Vec<&str> {
-        ids.iter()
-            .filter_map(|id| self.list.get(id))
-            .map(|t| t.hash.as_str())
-            .collect()
-    }
-
-    fn set_status(&mut self, status: TorrentStatus, ids: &[usize]) {
-        for id in ids {
-            if let Some(torrent) = self.list.get_mut(id) {
-                torrent.status = status;
-            }
-        }
-    }
-
-    fn start(&mut self, ids: &[usize]) -> usize {
-        error_try!(
-            self.client.start(&self.get_hashs(ids)),
-            return 0,
-            "Не удалось запустить раздачи: {}"
-        );
-        self.set_status(TorrentStatus::Seeding, ids);
-        ids.iter().count()
-    }
-
-    fn stop(&mut self, ids: &[usize]) -> usize {
-        error_try!(
-            self.client.stop(&self.get_hashs(ids)),
-            return 0,
-            "Не удалось остановить раздачи: {}"
-        );
-        self.set_status(TorrentStatus::Stopped, ids);
-        ids.iter().count()
-    }
-
-    fn remove(&mut self, ids: &[usize]) -> usize {
-        error_try!(
-            self.client.remove(&self.get_hashs(ids), true),
-            return 0,
-            "Не удалось удалить раздачи: {}"
-        );
-        for id in ids {
-            self.list.remove(id);
-        }
-        ids.iter().count()
-    }
-}
 
 #[derive(Debug)]
 pub struct Control<'a> {
-    clients: Vec<Client>,
+    clients: Vec<Box<dyn TorrentClient>>,
     db: &'a Database,
     dry_run: bool,
 }
@@ -93,117 +20,137 @@ impl<'a> Control<'a> {
         }
     }
 
-    fn torrent_id(&self) -> Vec<usize> {
-        let mut set = Vec::new();
-        for client in &self.clients {
-            set.extend(client.list.keys().cloned());
-        }
-        set
-    }
-
     pub fn add_client(&mut self, client: Box<dyn TorrentClient>) -> Result<()> {
-        let list = client.list()?;
-        let mut ids = self
-            .db
-            .get_topic_id(list.iter().map(|t| t.hash.as_str()).collect::<Vec<&str>>())?;
-        let client = Client {
-            list: list
-                .into_iter()
-                .filter_map(|torrent| Some((ids.remove(&torrent.hash)?, torrent)))
-                .collect(),
-            client,
-        };
+        self.db.save_torrent(client.list()?, client.url())?;
         self.clients.push(client);
         Ok(())
     }
 
-    pub fn set_status(&mut self, status: TorrentStatus, ids: &[usize]) {
-        self.clients
-            .iter_mut()
-            .for_each(|c| c.set_status(status, ids));
-    }
-
-    pub fn save_torrents(&self) -> Result<()> {
-        for client in &self.clients {
-            self.db.put_map(
-                DBName::LocalList,
-                &client
-                    .list
-                    .iter()
-                    .map(|(id, torrent)| (*id, torrent.status))
-                    .collect(),
-            )?;
-        }
-        Ok(())
-    }
-
-    pub fn start(&mut self, stop: usize, topics: &TopicInfoMap) {
-        let seeders = |seeders| seeders < stop;
-        let status = |status| status == TorrentStatus::Stopped;
+    pub fn start(&mut self, forum_id: i16, stop: i16) {
+        let range = (0, stop);
+        let status_vec = &[TorrentStatus::Stopped as i16];
         let mut count = 0;
         for client in &mut self.clients {
-            let ids = client.get_ids(topics, seeders, status);
+            let hash = error_try!(
+                    self.db
+                        .get_torrents_for_change(client.url(), forum_id, range, status_vec),
+                    continue,
+                    "Не удалось получить список раздач для запуска: {}"
+                );
             if self.dry_run {
-                for id in ids {
-                    info!("Раздача с id {} будет запущена", id);
-                }
+                error_try!(
+                    self.db.get_topic_id(&hash),
+                    continue,
+                    "Не удалось получить id раздач: {}"
+                )
+                .iter()
+                .for_each(|id| info!("Раздача с id {} будет запущена", id));
             } else {
-                count += client.start(&ids);
+                error_try!(
+                    client.start(&hash),
+                    continue,
+                    "Не удалось запустить раздачи: {}"
+                );
+                count += hash.len();
+                error_try!(
+                    self.db
+                        .set_status_by_hash(TorrentStatus::Seeding as i16, &hash),
+                    continue,
+                    "Не удалось изменить статус раздач в базе данных: {}"
+                );
             }
         }
         info!("Запущено раздач: {}", count);
     }
 
-    pub fn stop(&mut self, remove: usize, stop: usize, topics: &TopicInfoMap) {
-        let seeders = |seeders| seeders < remove && seeders >= stop;
-        let status = |status| status == TorrentStatus::Seeding;
+    pub fn stop(&mut self, forum_id: i16, stop: i16, remove: i16) {
+        let range = (stop, remove);
+        let status_vec = &[TorrentStatus::Seeding as i16];
         let mut count = 0;
         for client in &mut self.clients {
-            let ids = client.get_ids(topics, seeders, status);
+            let hash = error_try!(
+                    self.db
+                        .get_torrents_for_change(client.url(), forum_id, range, status_vec),
+                    continue,
+                    "Не удалось получить список раздач для остановки: {}"
+                );
             if self.dry_run {
-                for id in ids {
+                error_try!(
+                    self.db.get_topic_id(&hash),
+                    continue,
+                    "Не удалось получить id раздач: {}"
+                )
+                .iter()
+                .for_each(|id| {
                     info!(
                         "Раздача с id {} будет остановлена",
                         id
-                    );
-                }
+                    )
+                });
             } else {
-                count += client.stop(&ids);
+                error_try!(
+                    client.stop(&hash),
+                    continue,
+                    "Не удалось остановить раздачи: {}"
+                );
+                count += hash.len();
+                error_try!(
+                    self.db
+                        .set_status_by_hash(TorrentStatus::Stopped as i16, &hash),
+                    continue,
+                    "Не удалось изменить статус раздач в базе данных: {}"
+                );
             }
         }
         info!("Остановлено раздач: {}", count);
     }
 
-    pub fn remove(&mut self, remove: usize, topics: &TopicInfoMap) {
-        let seeders = |seeders| seeders >= remove;
-        let status = |status| status != TorrentStatus::Other;
+    pub fn remove(&mut self, forum_id: i16, remove: i16) {
+        let range = (remove, i16::max_value());
+        let status_vec = &[TorrentStatus::Seeding as i16, TorrentStatus::Stopped as i16];
         let mut count = 0;
         for client in &mut self.clients {
-            let ids = client.get_ids(topics, seeders, status);
+            let hash = error_try!(
+                    self.db
+                        .get_torrents_for_change(client.url(), forum_id, range, status_vec),
+                    continue,
+                    "Не удалось получить список раздач для удаления: {}"
+                );
             if self.dry_run {
-                for id in ids {
-                    info!("Раздача с id {} будет удалена", id);
-                }
+                error_try!(
+                    self.db.get_topic_id(&hash),
+                    continue,
+                    "Не удалось получить id раздач: {}"
+                )
+                .iter()
+                .for_each(|id| info!("Раздача с id {} будет удалена", id));
             } else {
-                count += client.remove(&ids);
+                error_try!(
+                    client.remove(&hash, true),
+                    continue,
+                    "Не удалось удалить раздачи: {}"
+                );
+                count += hash.len();
+                error_try!(
+                    self.db.delete_by_hash(&hash),
+                    continue,
+                    "Не удалось удалить раздачи из базы данных: {}"
+                );
             }
         }
         info!("Удалено раздач: {}", count);
     }
 
     pub fn apply_config(&mut self, forum: &Subforum) {
-        let torrent_id = self.torrent_id();
-        for id in &forum.ids {
-            let topics = match self.db.pvc(*id, Some(&torrent_id)) {
-                Ok(t) => t,
-                Err(err) => {
-                    error!("Control::apply_config::topics: {}", err);
-                    continue;
-                }
-            };
-            self.remove(forum.remove, &topics);
-            self.stop(forum.remove, forum.stop, &topics);
-            self.start(forum.stop, &topics);
+        for id in forum.id.iter().cloned() {
+            error_try!(
+                self.db.update_torrent_info(id),
+                continue,
+                "Не удалось обновить информацию о раздачах: {}"
+            );
+            self.remove(id, forum.remove);
+            self.stop(id, forum.stop, forum.remove);
+            self.start(id, forum.stop);
         }
     }
 }

@@ -75,42 +75,31 @@ pub struct Client {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Subforum {
-    pub ids: Vec<usize>,
+    pub id: Vec<i16>,
     #[serde(default = "remove")]
-    pub remove: usize,
+    pub remove: i16,
     #[serde(default = "stop")]
-    pub stop: usize,
+    pub stop: i16,
     #[serde(default = "download")]
-    pub download: usize,
+    pub download: i16,
 }
 
-fn remove() -> usize {
+fn remove() -> i16 {
     11
 }
 
-fn stop() -> usize {
+fn stop() -> i16 {
     5
 }
-fn download() -> usize {
+fn download() -> i16 {
     2
-}
-
-impl Default for Subforum {
-    fn default() -> Subforum {
-        Subforum {
-            ids: Vec::new(),
-            remove: 11,
-            stop: 5,
-            download: 2,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub subforum: Vec<Subforum>,
     #[serde(default)]
-    pub ignored_id: Vec<usize>,
+    pub ignored_id: Vec<i32>,
     #[serde(default)]
     pub log: Log,
     pub client: Vec<Client>,

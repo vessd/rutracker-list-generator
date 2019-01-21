@@ -7,6 +7,7 @@ pub use self::deluge::Deluge;
 pub use self::transmission::Transmission;
 
 use self::transmission::{ArgGet, DeleteLocalData, TorrentSelect, TorrentStatus as TStatus};
+use std::fmt::Debug;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
@@ -25,18 +26,29 @@ pub enum TorrentStatus {
     Other,
 }
 
+impl From<i16> for TorrentStatus {
+    fn from(status: i16) -> Self {
+        match status {
+            0 => TorrentStatus::Seeding,
+            1 => TorrentStatus::Stopped,
+            _ => TorrentStatus::Other,
+        }
+    }
+}
+
 /// A trait for any object that will represent a torrent client.
-pub trait TorrentClient: ::std::fmt::Debug {
+pub trait TorrentClient: Debug {
+    fn url(&self) -> &str;
     /// Returns a list of all torrents in the client.
     fn list(&self) -> Result<Vec<Torrent>>;
     /// Starts a list of torrents.
-    fn start(&self, &[&str]) -> Result<()>;
+    fn start(&self, &[String]) -> Result<()>;
     /// Stop a list of torrents.
-    fn stop(&self, &[&str]) -> Result<()>;
+    fn stop(&self, &[String]) -> Result<()>;
     /// Remove a list of torrents from client.
     ///
     /// If the second parameter is true, then it also removes local data.
-    fn remove(&self, &[&str], bool) -> Result<()>;
+    fn remove(&self, &[String], bool) -> Result<()>;
 }
 
 impl From<TStatus> for TorrentStatus {
@@ -50,6 +62,9 @@ impl From<TStatus> for TorrentStatus {
 }
 
 impl TorrentClient for Transmission {
+    fn url(&self) -> &str {
+        self.url()
+    }
     fn list(&self) -> Result<Vec<Torrent>> {
         Ok(self
             .get(TorrentSelect::All, &[ArgGet::HashString, ArgGet::Status])?
@@ -60,29 +75,34 @@ impl TorrentClient for Transmission {
             })
             .collect())
     }
-    fn start(&self, hashes: &[&str]) -> Result<()> {
-        self.start(TorrentSelect::Ids(hashes)).map_err(From::from)
+    fn start(&self, hashes: &[String]) -> Result<()> {
+        self.start(TorrentSelect::Ids(hashes))?;
+        Ok(())
     }
-    fn stop(&self, hashes: &[&str]) -> Result<()> {
-        self.stop(TorrentSelect::Ids(hashes)).map_err(From::from)
+    fn stop(&self, hashes: &[String]) -> Result<()> {
+        self.stop(TorrentSelect::Ids(hashes))?;
+        Ok(())
     }
-    fn remove(&self, hashes: &[&str], delete: bool) -> Result<()> {
-        self.remove(TorrentSelect::Ids(hashes), DeleteLocalData(delete))
-            .map_err(From::from)
+    fn remove(&self, hashes: &[String], delete: bool) -> Result<()> {
+        self.remove(TorrentSelect::Ids(hashes), DeleteLocalData(delete))?;
+        Ok(())
     }
 }
 
 impl TorrentClient for Deluge {
+    fn url(&self) -> &str {
+        unimplemented!();
+    }
     fn list(&self) -> Result<Vec<Torrent>> {
         unimplemented!();
     }
-    fn start(&self, _hashes: &[&str]) -> Result<()> {
+    fn start(&self, _hashes: &[String]) -> Result<()> {
         unimplemented!();
     }
-    fn stop(&self, _hashes: &[&str]) -> Result<()> {
+    fn stop(&self, _hashes: &[String]) -> Result<()> {
         unimplemented!();
     }
-    fn remove(&self, _hashes: &[&str], _delete: bool) -> Result<()> {
+    fn remove(&self, _hashes: &[String], _delete: bool) -> Result<()> {
         unimplemented!();
     }
 }

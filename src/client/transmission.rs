@@ -1,4 +1,5 @@
 //! A minimal implementation of rpc client for Tranmission.
+use reqwest::header::HeaderValue;
 use reqwest::{self, Client, IntoUrl, StatusCode, Url};
 use serde_json::Value;
 use std::{fmt, result};
@@ -18,7 +19,7 @@ enum TransmissionError {
 /// A enum that represents the "ids" field in request body.
 #[derive(Debug, Clone, Copy)]
 pub enum TorrentSelect<'a> {
-    Ids(&'a [&'a str]),
+    Ids(&'a [String]),
     All,
 }
 
@@ -118,8 +119,6 @@ struct Response {
     result: ResponseStatus,
 }
 
-header! { (SessionId, "X-Transmission-Session-Id") => [String] }
-
 /// RPC username and password.
 #[derive(Debug)]
 struct User {
@@ -132,7 +131,7 @@ struct User {
 pub struct Transmission {
     url: Url,
     user: Option<User>,
-    sid: SessionId,
+    sid: HeaderValue,
     http_client: Client,
 }
 
@@ -178,7 +177,7 @@ impl Transmission {
             .get(url.clone())
             .send()?
             .headers()
-            .get::<SessionId>()
+            .get("X-Transmission-Session-Id")
             .ok_or(TransmissionError::SessionIdNotFound)?
             .clone();
         Ok(Transmission {
@@ -187,6 +186,10 @@ impl Transmission {
             sid,
             http_client,
         })
+    }
+
+    pub fn url(&self) -> &str {
+        self.url.as_str()
     }
 
     /// Make a request to the Transmission.
@@ -199,13 +202,14 @@ impl Transmission {
             .http_client
             .post(self.url.clone())
             .json(json)
-            .header(self.sid.clone())
+            .header("X-Transmission-Session-Id", self.sid.clone())
             .send()?;
         match resp.status() {
-            StatusCode::Ok => Ok(resp),
+            StatusCode::OK => Ok(resp),
             _ => Err(TransmissionError::UnexpectedStatus {
                 status: resp.status(),
-            }.into()),
+            }
+            .into()),
         }
     }
 

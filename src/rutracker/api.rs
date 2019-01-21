@@ -1,5 +1,7 @@
 //! A module to access Rutracker API
 
+use chrono::naive::serde::ts_seconds;
+use chrono::naive::NaiveDateTime;
 use reqwest::{self, Client, IntoUrl, Url};
 use std::collections::HashMap;
 
@@ -8,9 +10,7 @@ pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 #[derive(Debug, Fail)]
 #[fail(
     display = "Rutracker API responded with an error: {}: {{ code: {}, text: {} }}",
-    method,
-    code,
-    text
+    method, code, text
 )]
 struct ApiError {
     method: &'static str,
@@ -63,37 +63,41 @@ impl ::serde::Serialize for TopicStat {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TopicData {
     pub info_hash: String,
-    pub forum_id: usize,
-    pub poster_id: isize,
+    pub forum_id: i16,
+    pub poster_id: i32,
     pub size: f64,
-    pub reg_time: usize,
-    pub tor_status: usize,
-    pub seeders: usize,
+    #[serde(with = "ts_seconds")]
+    pub reg_time: NaiveDateTime,
+    pub tor_status: i16,
+    pub seeders: i16,
     pub topic_title: String,
     pub seeder_last_seen: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TopicInfo {
-    pub tor_status: usize,
-    pub seeders: usize,
-    pub reg_time: i64,
+    pub tor_status: i16,
+    pub seeders: i16,
+    #[serde(with = "ts_seconds")]
+    pub reg_time: NaiveDateTime,
+    pub tor_size_bytes: f64,
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum OptionInfo {
     None(),
-    Some((usize, usize, i64)),
+    Some((i16, i16, i64, f64)),
 }
 
 impl From<OptionInfo> for Option<TopicInfo> {
     fn from(info: OptionInfo) -> Self {
-        if let OptionInfo::Some((tor_status, seeders, reg_time)) = info {
+        if let OptionInfo::Some((tor_status, seeders, reg_time, tor_size_bytes)) = info {
             Some(TopicInfo {
                 tor_status,
                 seeders,
-                reg_time,
+                reg_time: NaiveDateTime::from_timestamp(reg_time, 0),
+                tor_size_bytes,
             })
         } else {
             None
@@ -122,8 +126,8 @@ pub struct RutrackerApi {
 }
 
 macro_rules! dynamic {
-    ($name:ident, $arrayname:ident : $arraytype:ty, $key:ty, $value:ty) => {
-        pub fn $name(&self, $arrayname: Vec<$arraytype>) -> Result<HashMap<$key, $value>>
+    ($name:ident, $arrayname:ident : $key:ty, $value:ty) => {
+        pub fn $name(&self, $arrayname: Vec<$key>) -> Result<HashMap<$key, $value>>
         {
             let base_url = {
                 let mut url = self.url.join(concat!("v1/", stringify!($name)))?;
@@ -170,17 +174,18 @@ impl RutrackerApi {
                 method: "get_limit",
                 code: err.code,
                 text: err.text,
-            }.into()),
+            }
+            .into()),
         }
     }
 
-    dynamic!(get_forum_name, forum_id: &usize, usize, String);
-    dynamic!(get_user_name, user_id: &usize, usize, String);
-    dynamic!(get_peer_stats, topic_id: &usize, usize, TopicStat);
-    dynamic!(get_topic_id, hash: &str, String, usize);
-    dynamic!(get_tor_topic_data, topic_id: &usize, usize, TopicData);
+    dynamic!(get_forum_name, forum_id: i16, String);
+    dynamic!(get_user_name, user_id: i32, String);
+    dynamic!(get_peer_stats, topic_id: i32, TopicStat);
+    dynamic!(get_topic_id, hash: String, i32);
+    dynamic!(get_tor_topic_data, topic_id: i32, TopicData);
 
-    pub fn forum_size(&self) -> Result<HashMap<usize, (usize, f64)>> {
+    pub fn forum_size(&self) -> Result<HashMap<i16, (i32, f64)>> {
         let url = self.url.join("v1/static/forum_size")?;
         let res: Response<HashMap<_, _>> = self.http_client.get(url).send()?.json()?;
         match res.error {
@@ -189,18 +194,19 @@ impl RutrackerApi {
                 method: "forum_size",
                 code: err.code,
                 text: err.text,
-            }.into()),
+            }
+            .into()),
         }
     }
 
     /// Get peer stats for all topics of the sub-forum
-    pub fn pvc(&self, forum_id: usize) -> Result<HashMap<usize, TopicInfo>> {
+    pub fn pvc(&self, forum_id: i16) -> Result<HashMap<i32, TopicInfo>> {
         let url = self
             .url
             .join("v1/static/pvc/f/")?
             .join(forum_id.to_string().as_str())?;
         debug!("RutrackerApi::pvc::url: {}", url);
-        let res: Response<HashMap<usize, OptionInfo>> = self.http_client.get(url).send()?.json()?;
+        let res: Response<HashMap<i32, OptionInfo>> = self.http_client.get(url).send()?.json()?;
         match res.error {
             None => Ok(res
                 .result
@@ -214,7 +220,8 @@ impl RutrackerApi {
                 method: "pvc",
                 code: err.code,
                 text: err.text,
-            }.into()),
+            }
+            .into()),
         }
     }
 }

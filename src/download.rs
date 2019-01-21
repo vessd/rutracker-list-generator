@@ -1,5 +1,6 @@
-use chrono::{Duration, Local};
-use database::{DBName, Database};
+use chrono::naive::NaiveDateTime;
+use chrono::Local;
+use database::Database;
 use rutracker::RutrackerForum;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -24,11 +25,11 @@ impl<'a> Downloader<'a> {
     pub fn get_list_for_download(
         &self,
         forum_id: usize,
-        download: usize,
+        download: i16,
     ) -> Result<HashMap<usize, (String, usize)>> {
-        let date = Local::now();
-        let num_days = |time: i64| Duration::seconds(date.timestamp() - time).num_days();
-        let check_reg_time_and_status = |status: usize, time: i64| {
+        /* let date = Local::now().naive_local();
+        let num_days = |time: NaiveDateTime| date.signed_duration_since(time).num_days();
+        let check_reg_time_and_status = |status: i16, time: NaiveDateTime| {
             ([2, 3, 8].contains(&status) && num_days(time) > 30)
                 || ([0, 10].contains(&status) && num_days(time) > 90)
         };
@@ -42,7 +43,7 @@ impl<'a> Downloader<'a> {
             .filter(|(_, v)| v.seeders <= download)
             .filter(|(_, v)| check_reg_time_and_status(v.tor_status, v.reg_time))
             .filter(|(id, _)| !self.ignored_id.contains(id) && !keeper_list.contains(id))
-            .collect();
+            .collect(); */
         Ok(HashMap::new())
     }
 }

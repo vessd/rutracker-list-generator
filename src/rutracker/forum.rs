@@ -3,8 +3,10 @@ use cookie;
 use encoding_rs::WINDOWS_1251;
 use kuchiki::traits::TendrilSink;
 use kuchiki::{self, ElementData, NodeDataRef, NodeRef};
-use reqwest::header::{ContentType, Cookie, Headers, SetCookie};
+use reqwest::header::{HeaderMap, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use reqwest::{Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode};
+use std::ops::Deref;
+use std::rc::Rc;
 use url::form_urlencoded;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
@@ -27,7 +29,7 @@ enum ForumError {
 
 #[derive(Debug)]
 struct IterPage<'a> {
-    url: String,
+    url: &'a str,
     href: Option<String>,
     client: &'a Client,
 }
@@ -64,7 +66,7 @@ pub struct User {
     pub name: String,
     pub bt: String,
     pub api: String,
-    pub cookie: Cookie,
+    pub cookies: HeaderMap,
     pub form_token: String,
 }
 
@@ -82,10 +84,10 @@ impl User {
         };
         let name = config.user.name.clone();
         let url = config.url.clone();
-        let cookie = User::get_cookie(config, &client)?;
+        let cookies = User::get_cookie(config, &client)?;
         let page = client
             .get((url + "profile.php").as_str())
-            .header(cookie.clone())
+            .headers(cookies.clone())
             .query(&[("mode", "viewprofile"), ("u", &name)])
             .send()?
             .text()?;
@@ -96,13 +98,13 @@ impl User {
             name,
             bt,
             api,
-            cookie,
+            cookies,
             form_token,
         })
     }
 
     // https://github.com/seanmonstar/reqwest/issues/14
-    fn get_cookie(config: &ForumConfig, client: &Client) -> Result<Cookie> {
+    fn get_cookie(config: &ForumConfig, client: &Client) -> Result<HeaderMap> {
         let resp = client
             .post((config.url.clone() + "login.php").as_str())
             .form(&[
@@ -111,17 +113,21 @@ impl User {
                 ("login", "Вход"),
             ])
             .send()?;
-
-        let mut cookie = Cookie::new();
-        resp.headers()
-            .get::<SetCookie>()
-            .ok_or(ForumError::CookieNotFound)?
-            .iter()
-            .for_each(|c| {
-                let co = cookie::Cookie::parse(c.as_str()).unwrap();
-                cookie.append(co.name().to_owned(), co.value().to_owned());
-            });
-        Ok(cookie)
+        let mut cookies = String::new();
+        for c in resp.headers().get_all(SET_COOKIE).iter() {
+            let c = cookie::Cookie::parse(c.to_str()?)?;
+            if !cookies.is_empty() {
+                cookies.push_str("; ");
+            }
+            cookies.push_str(format!("{}={}", c.name(), c.value()).as_str());
+        }
+        if cookies.is_empty() {
+            Err(ForumError::CookieNotFound.into())
+        } else {
+            let mut map = HeaderMap::new();
+            map.insert(COOKIE, cookies.parse()?);
+            Ok(map)
+        }
     }
 
     fn get_keys(page: &str) -> Option<(String, String, usize)> {
@@ -154,26 +160,26 @@ impl User {
 }
 
 #[derive(Debug)]
-pub struct Post<'a> {
-    pub id: usize,
+pub struct Post {
+    pub id: i32,
     pub author: String,
     pub body: NodeDataRef<ElementData>,
-    topic: &'a Topic<'a>,
+    topic: Rc<TopicData>,
 }
 
-impl<'a> Post<'a> {
-    fn from_node(node: &NodeRef, topic: &'a Topic) -> Option<Post<'a>> {
+impl Post {
+    fn from_node(node: &NodeRef, topic: &Topic) -> Option<Post> {
         Some(Post {
             id: RutrackerForum::get_id(node, "id").or_else(|| {
                 RutrackerForum::get_id(node.select_first(".small").ok()?.as_node(), "href")
             })?,
             author: RutrackerForum::get_text(node, ".nick")?,
             body: node.select_first(".post_body").ok()?,
-            topic,
+            topic: Rc::clone(&topic.0),
         })
     }
 
-    pub fn get_stored_torrents(&self) -> Vec<usize> {
+    pub fn get_stored_torrents(&self) -> Vec<i32> {
         self.body
             .as_node()
             .select(".postLink")
@@ -224,73 +230,68 @@ impl<'a> Post<'a> {
             .client
             .post(url.as_str())
             .body(params)
-            .header(ContentType::form_url_encoded())
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .send()?;
         match resp.status() {
-            StatusCode::Ok => Ok(()),
+            StatusCode::OK => Ok(()),
             _ => Err(ForumError::UnexpectedStatus {
                 status: resp.status(),
-            }.into()),
+            }
+            .into()),
         }
     }
 }
 
-#[derive(Debug)]
-pub struct Topic<'a> {
-    pub id: usize,
+#[derive(Debug, Clone)]
+pub struct TopicData {
+    pub id: i32,
     pub author: String,
     pub title: String,
-    forum: &'a Forum<'a>,
+    forum: Rc<ForumData>,
 }
 
-impl<'a> Topic<'a> {
-    fn iter(&self) -> IterPage<'a> {
+#[derive(Debug)]
+pub struct Topic(pub Rc<TopicData>);
+
+impl Deref for Topic {
+    type Target = TopicData;
+    #[inline]
+    fn deref(&self) -> &TopicData {
+        &*self.0
+    }
+}
+
+impl Topic {
+    fn iter(&self) -> IterPage {
         IterPage {
-            url: self.forum.rutracker.url.clone(),
+            url: self.forum.rutracker.url.as_str(),
             href: Some(format!("viewtopic.php?t={}", self.id)),
             client: &self.forum.rutracker.client,
         }
     }
 
-    fn from_node(node: &NodeRef, forum: &'a Forum) -> Option<Topic<'a>> {
-        Some(Topic {
+    fn from_node(node: &NodeRef, forum: &Forum) -> Option<Topic> {
+        Some(Topic(Rc::new(TopicData {
             id: RutrackerForum::get_id(node, "data-topic_id")?,
             author: RutrackerForum::get_text(node, ".vf-col-author")?,
             title: RutrackerForum::get_text(node, ".tt-text")?,
-            forum,
-        })
-    }
-
-    pub fn get_stored_torrents(&self) -> Result<(Vec<String>, Vec<Vec<usize>>)> {
-        let posts = self.get_posts()?;
-        let mut keeper = Vec::new();
-        let mut torrent_id: Vec<Vec<usize>> = Vec::new();
-        for p in posts.iter().skip(1) {
-            if let Some(i) = keeper.iter().position(|k| *k == p.author) {
-                torrent_id[i].extend(p.get_stored_torrents().into_iter());
-            } else {
-                keeper.push(p.author.clone());
-                torrent_id.push(p.get_stored_torrents());
-            }
-        }
-        Ok((keeper, torrent_id))
+            forum: Rc::clone(&forum.0),
+        })))
     }
 
     pub fn get_posts(&self) -> Result<Vec<Post>> {
         let mut posts = Vec::new();
         for page in self.iter() {
-            let document = page?;
-            let topic_main = match document.select_first("#topic_main") {
-                Ok(topic) => topic,
+            match page?.select_first("#topic_main") {
+                Ok(topic) => posts.extend(
+                    topic
+                        .as_node()
+                        .select(".row1,.row2")
+                        .unwrap()
+                        .filter_map(|d| Post::from_node(d.as_node(), self)),
+                ),
                 Err(()) => break,
             };
-            posts.extend(
-                topic_main
-                    .as_node()
-                    .select(".row1,.row2")
-                    .unwrap()
-                    .filter_map(|d| Post::from_node(d.as_node(), self)),
-            );
         }
         Ok(posts)
     }
@@ -298,7 +299,7 @@ impl<'a> Topic<'a> {
     pub fn get_user_posts(&self) -> Result<Vec<Post>> {
         let mut posts = Vec::new();
         let iter = IterPage {
-            url: self.forum.rutracker.url.clone(),
+            url: self.forum.rutracker.url.as_str(),
             href: Some(format!(
                 "search.php?uid={}&t={}&dm=1",
                 self.forum.rutracker.user.id, self.id
@@ -318,7 +319,7 @@ impl<'a> Topic<'a> {
         Ok(posts)
     }
 
-    pub fn reply(&self, message: &str) -> Result<Option<usize>> {
+    pub fn reply(&self, message: &str) -> Result<Option<i32>> {
         if message.len() > MESSAGE_LEN {
             return Err(ForumError::MessageLengthExceeded.into());
         }
@@ -351,12 +352,13 @@ impl<'a> Topic<'a> {
             .client
             .post(url.as_str())
             .body(params)
-            .header(ContentType::form_url_encoded())
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .send()?;
-        if resp.status() != StatusCode::Ok {
+        if resp.status() != StatusCode::OK {
             return Err(ForumError::UnexpectedStatus {
                 status: resp.status(),
-            }.into());
+            }
+            .into());
         }
         let document = kuchiki::parse_html().one(resp.text()?);
         let post_id = match document.select_first(".mrg_16 a") {
@@ -368,28 +370,39 @@ impl<'a> Topic<'a> {
 }
 
 #[derive(Debug)]
-pub struct Forum<'a> {
+pub struct ForumData {
     pub id: usize,
     pub title: String,
-    rutracker: &'a RutrackerForum,
+    rutracker: Rc<RutrackerForumData>,
 }
 
-impl<'a> Forum<'a> {
-    fn iter(&self) -> IterPage<'a> {
+#[derive(Debug)]
+pub struct Forum(pub Rc<ForumData>);
+
+impl Deref for Forum {
+    type Target = ForumData;
+    #[inline]
+    fn deref(&self) -> &ForumData {
+        &*self.0
+    }
+}
+
+impl Forum {
+    fn iter(&self) -> IterPage {
         IterPage {
-            url: self.rutracker.url.clone(),
+            url: self.rutracker.url.as_str(),
             href: Some(format!("viewforum.php?f={}", self.id)),
-            client: &self.rutracker.client,
+            client: &self.0.rutracker.client,
         }
     }
 
-    pub fn get_topic<T: Into<String>>(&self, id: usize, author: T, title: T) -> Topic {
-        Topic {
+    pub fn get_topic<T: Into<String>>(&self, id: i32, author: T, title: T) -> Topic {
+        Topic(Rc::new(TopicData {
             id,
             author: author.into(),
             title: title.into(),
-            forum: self,
-        }
+            forum: Rc::clone(&self.0),
+        }))
     }
 
     pub fn get_topics(&self) -> Result<Vec<Topic>> {
@@ -408,11 +421,22 @@ impl<'a> Forum<'a> {
 }
 
 #[derive(Debug)]
-pub struct RutrackerForum {
+pub struct RutrackerForumData {
     pub user: User,
     client: Client,
     url: String,
     dry_run: bool,
+}
+
+#[derive(Debug)]
+pub struct RutrackerForum(pub Rc<RutrackerForumData>);
+
+impl Deref for RutrackerForum {
+    type Target = RutrackerForumData;
+    #[inline]
+    fn deref(&self) -> &RutrackerForumData {
+        &*self.0
+    }
 }
 
 impl RutrackerForum {
@@ -420,30 +444,30 @@ impl RutrackerForum {
         let user = User::new(config)?;
         let url = config.url.clone();
         let proxy = config.proxy.as_ref();
-        let mut headers = Headers::new();
-        headers.set(user.cookie.clone());
         let client = if let Some(p) = proxy {
             ClientBuilder::new()
                 .proxy(Proxy::all(p)?)
-                .default_headers(headers)
+                .default_headers(user.cookies.clone())
                 .build()?
         } else {
-            ClientBuilder::new().default_headers(headers).build()?
+            ClientBuilder::new()
+                .default_headers(user.cookies.clone())
+                .build()?
         };
-        Ok(RutrackerForum {
+        Ok(RutrackerForum(Rc::new(RutrackerForumData {
             client,
             url,
             user,
             dry_run,
-        })
+        })))
     }
 
     pub fn get_forum<T: Into<String>>(&self, id: usize, title: T) -> Forum {
-        Forum {
+        Forum(Rc::new(ForumData {
             id,
             title: title.into(),
-            rutracker: self,
-        }
+            rutracker: Rc::clone(&self.0),
+        }))
     }
 
     pub fn get_keepers_forum(&self) -> Forum {
@@ -467,14 +491,14 @@ impl RutrackerForum {
         )
     }
 
-    fn get_id(node: &NodeRef, attribute: &str) -> Option<usize> {
+    fn get_id(node: &NodeRef, attribute: &str) -> Option<i32> {
         node.as_element()?
             .attributes
             .borrow()
             .get(attribute)?
             .split(|c: char| !c.is_ascii_digit())
             .find(|s| !s.is_empty())?
-            .parse::<usize>()
+            .parse::<i32>()
             .ok()
     }
 

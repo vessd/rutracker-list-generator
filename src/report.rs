@@ -1,24 +1,21 @@
 use chrono::Local;
-use database::{DBName, Database};
+use database::Database;
 use rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN};
+use std::collections::HashMap;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 
 #[derive(Debug)]
-pub struct List {
-    forum: usize,
-    size: f64,
-    id: Vec<usize>,
+pub struct Report<'a> {
+    forum_id: Vec<i16>,
+    date: String,
+    db: &'a Database,
 }
 
-impl List {
-    pub fn new(db: &Database, forum: usize, id: Vec<usize>) -> Result<Self> {
-        let size = db
-            .get_tor_topic_data(&id)?
-            .iter()
-            .map(|(_, data)| data.size)
-            .sum();
-        Ok(Self { forum, id, size })
+impl<'a> Report<'a> {
+    pub fn new(db: &'a Database, forum_id: Vec<i16>) -> Self {
+        let date = Local::now().format("%d.%m.%Y").to_string();
+        Self { forum_id, date, db }
     }
 
     fn convert_size(size: f64) -> String {
@@ -34,25 +31,22 @@ impl List {
         }
     }
 
-    pub fn to_bbcode(&self, db: &Database, date: &str, max_len: usize) -> Result<Vec<String>> {
+    pub fn get_bbcode_message(&self, forum_id: i16, max_len: usize) -> Result<Vec<String>> {
         let header_len = 200;
         let body_len = max_len - header_len;
         let mut message = String::with_capacity(max_len);
+        let mut item = self.db.get_local_tor_by_forum(forum_id)?;
+        item.sort_unstable_by(|a, b| a.1.as_str().cmp(b.1.as_str()));
+        let count = item.len();
+        let size = Report::convert_size(item.iter().map(|(_, _, size)| size).sum());
         message.push_str(
             format!(
                 "Актуально на: [color=darkblue]{}[/color]\n\
                  Всего хранимых раздач в подразделе: {} шт. / {}\n",
-                date,
-                self.id.len(),
-                List::convert_size(self.size)
-            ).as_str(),
+                self.date, count, size
+            )
+            .as_str(),
         );
-        let mut item: Vec<(usize, String, f64)> = db
-            .get_tor_topic_data(&self.id)?
-            .into_iter()
-            .map(|(id, data)| (id, data.topic_title, data.size))
-            .collect();
-        item.sort_unstable_by(|a, b| a.1.as_str().cmp(b.1.as_str()));
         let mut item: Vec<String> = item
             .into_iter()
             .map(|(id, topic_title, size)| {
@@ -60,7 +54,7 @@ impl List {
                     "[*][url=viewtopic.php?t={}]{}[/url] {}\n",
                     id,
                     topic_title,
-                    List::convert_size(size)
+                    Report::convert_size(size)
                 )
             })
             .collect();
@@ -74,16 +68,17 @@ impl List {
                 len += s.len();
             }
         }
-        debug!("List::to_bbcode::num {:?}", num);
+        debug!("Report::get_bbcode_message::num {:?}", num);
         let mut vec = Vec::with_capacity(num.len() + 1);
         message.push_str(
             format!(
                 "[spoiler=\"№№ 1 — {}\"][list=1]\n",
-                num.get(0).unwrap_or(&self.id.len())
-            ).as_str(),
+                num.get(0).unwrap_or(&count)
+            )
+            .as_str(),
         );
         item.iter()
-            .take(*num.get(0).unwrap_or(&self.id.len()))
+            .take(*num.get(0).unwrap_or(&count))
             .for_each(|i| message.push_str(i));
         message.push_str("[/list][/spoiler]\n");
         vec.push(message);
@@ -93,56 +88,30 @@ impl List {
                 format!(
                     "[spoiler=\"№№ {} — {}\"][list=1]\n",
                     num[i] + 1,
-                    num.get(i + 1).unwrap_or(&self.id.len())
-                ).as_str(),
+                    num.get(i + 1).unwrap_or(&count)
+                )
+                .as_str(),
             );
             item[num[i]].insert_str(2, format!("={}", num[i] + 1).as_str());
             item.iter()
                 .skip(num[i])
-                .take(*num.get(i + 1).unwrap_or(&(self.id.len() + 1)) - num[i])
+                .take(*num.get(i + 1).unwrap_or(&(count + 1)) - num[i])
                 .for_each(|i| message.push_str(i));
             message.push_str("[/list][/spoiler]\n");
             vec.push(message);
         }
         Ok(vec)
     }
-}
 
-#[derive(Debug)]
-pub struct Report<'a> {
-    list: Vec<List>,
-    date: String,
-    db: &'a Database,
-    forum: &'a RutrackerForum,
-}
-
-impl<'a> Report<'a> {
-    pub fn new(db: &'a Database, forum: &'a RutrackerForum) -> Self {
-        Self {
-            list: Vec::new(),
-            date: Local::now().format("%d.%m.%Y").to_string(),
-            db,
-            forum,
-        }
-    }
-
-    pub fn add_list(&mut self, list: List) {
-        self.list.push(list);
-    }
-
-    pub fn send_list_header(&self, forum_id: usize, topic: &Topic, post: &Post) -> Result<()> {
-        info!("Формирование статиски подраздела...");
-        let forum_size = self.db.get_forum_size(forum_id)?.unwrap_or((0, 0f64));
-        let (keeper, torrent_id) = topic.get_stored_torrents()?;
-        for (i, k) in keeper.iter().enumerate() {
-            self.db.put(DBName::KeeperList, k, &torrent_id[i])?;
-        }
-        let mut torrent: Vec<usize> = torrent_id.iter().flat_map(|id| id).cloned().collect();
-        torrent.sort_unstable();
-        torrent.dedup();
-        let torrent_info = self.db.get_tor_topic_data(torrent)?;
-        let count = torrent_info.len();
-        let size = torrent_info.values().map(|d| d.size).sum();
+    pub fn send_list_header(&self, forum_id: i16, topic_title: &str, post: &Post) -> Result<()> {
+        info!(
+            "Формирование статиски подраздела {}...",
+            forum_id
+        );
+        let forum_size = self.db.get_forum_size(forum_id)?;
+        let keepres_list_size = self.db.get_keepres_list_size(forum_id)?;
+        let count: i32 = keepres_list_size.iter().map(|s| s.1).sum();
+        let size = keepres_list_size.iter().map(|s| s.2).sum();
         let mut message = format!(
             "[url=viewforum.php?f={}][u][color=#006699]{}[/u][/color][/url] \
              | [url=tracker.php?f={0}&tm=-1&o=10&s=1&oop=1][color=indigo]\
@@ -153,15 +122,15 @@ impl<'a> Report<'a> {
              {} шт. / {}\n\
              Количество хранителей: {}\n[hr]\n",
             forum_id,
-            topic.title.split(" » ").last().unwrap_or(""),
+            topic_title.split(" » ").last().unwrap_or(""),
             self.date,
             forum_size.0,
-            List::convert_size(forum_size.1),
+            Report::convert_size(forum_size.1),
             count,
-            List::convert_size(size),
-            keeper.len()
+            Report::convert_size(size),
+            keepres_list_size.len()
         );
-        for (num, name) in keeper.iter().enumerate() {
+        for (num, (name, count, size)) in keepres_list_size.iter().enumerate() {
             message.push_str(
                 format!(
                     "Хранитель {}: \
@@ -171,25 +140,20 @@ impl<'a> Report<'a> {
                     num + 1,
                     RutrackerForum::encode(&[("u", name)]),
                     name,
-                    torrent_id[num].len(),
-                    List::convert_size(
-                        torrent_id[num]
-                            .iter()
-                            .filter_map(|id| torrent_info.get(id))
-                            .map(|d| d.size)
-                            .sum()
-                    )
-                ).as_str(),
+                    count,
+                    Report::convert_size(*size)
+                )
+                .as_str(),
             );
         }
         post.edit(message.as_str())?;
         Ok(())
     }
 
-    pub fn send_list(&self, list: &List, topic: &Topic) -> Result<Option<usize>> {
-        let messages = list.to_bbcode(self.db, &self.date, MESSAGE_LEN)?;
+    pub fn send_list(&self, forum_id: i16, topic: &Topic) -> Result<Option<i32>> {
+        let messages = self.get_bbcode_message(forum_id, MESSAGE_LEN)?;
         let posts = topic.get_user_posts()?;
-        let name = self.forum.user.name.as_str();
+        let name = self.db.forum.user.name.as_str();
         let post_id = {
             let mut message = messages.iter();
             let mut post = posts.iter().skip(if topic.author == name { 1 } else { 0 });
@@ -212,69 +176,61 @@ impl<'a> Report<'a> {
             post_id
         };
         if topic.author == name {
-            self.send_list_header(list.forum, topic, &posts[0])?;
+            self.send_list_header(forum_id, topic.title.as_str(), &posts[0])?;
         }
         Ok(post_id)
     }
 
-    pub fn send_all_list(&self) -> Result<Vec<(Option<usize>, String, usize, f64)>> {
-        let keeper_working_forum = self.forum.get_keepers_working_forum();
-        let mut topics = self.db.get_topic_with_subforum_list(
-            &keeper_working_forum,
-            &self.list.iter().map(|r| r.forum).collect::<Vec<usize>>(),
-        )?;
-        let mut vec = Vec::with_capacity(topics.len());
-        for list in &self.list {
-            if let Some((id, author, title)) = topics.remove(&list.forum) {
-                let topic = keeper_working_forum.get_topic(id, author, title);
-                vec.push((
-                    self.send_list(list, &topic)?,
-                    topic.title,
-                    list.id.len(),
-                    list.size,
-                ));
-            }
+    pub fn send_all_list(&self) -> Result<HashMap<i16, Option<i32>>> {
+        let topics = self.db.get_topics(&self.forum_id)?;
+        let mut map = HashMap::with_capacity(topics.len());
+        for (id, topic) in topics {
+            map.insert(id, self.send_list(id, &topic)?);
         }
-        Ok(vec)
+        Ok(map)
     }
 
     pub fn send_all(&self) -> Result<()> {
-        let mut vec = self.send_all_list()?;
-        let (count, size) = vec.iter().fold((0, 0f64), |(count, size), (_, _, c, s)| {
-            (count + c, size + s)
-        });
+        let map = self.send_all_list()?;
+        let mut local_list_size = self
+            .db
+            .get_local_list_size(&map.keys().cloned().collect::<Vec<i16>>())?;
+        let count: i32 = local_list_size.iter().map(|l| l.2).sum();
+        let size = local_list_size.iter().map(|l| l.3).sum();
         let mut message = format!(
             "Актуально на: {}\n\
              Общее количество хранимых раздач: {} шт.\n\
              Общий вес хранимых раздач: {}\n[hr]",
             self.date,
             count,
-            List::convert_size(size),
+            Report::convert_size(size),
         );
-        vec.sort_unstable_by(|a, b| a.1.as_str().cmp(b.1.as_str()));
-        for (id, title, count, size) in vec {
-            if let Some(id) = id {
+        local_list_size.sort_unstable_by(|a, b| a.1.as_str().cmp(b.1.as_str()));
+        for (f_id, title, count, size) in local_list_size {
+            if let Some(p_id) = map[&f_id] {
                 message.push_str(
                     format!(
                         "[url=viewtopic.php?p={}#{0}][u]{}[/u][/url] — {} шт. ({})",
-                        id,
-                        title.trim_left_matches("[Список] "),
+                        p_id,
+                        title.trim_start_matches("[Список] "),
                         count,
-                        List::convert_size(size)
-                    ).as_str(),
+                        Report::convert_size(size)
+                    )
+                    .as_str(),
                 );
             } else {
                 message.push_str(
                     format!(
                         "[u]{}[/u] — {} шт. ({})",
-                        title.trim_left_matches("[Список] "),
+                        title.trim_start_matches("[Список] "),
                         count,
-                        List::convert_size(size)
-                    ).as_str(),
+                        Report::convert_size(size)
+                    )
+                    .as_str(),
                 );
             }
         }
-        let keepers_forum = self.forum.get_keepers_forum();
+        let keepers_forum = self.db.forum.get_keepers_forum();
         let summary_report = keepers_forum.get_topic(
             4275633,
             "Tokuchi_Toua",
