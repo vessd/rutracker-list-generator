@@ -1,6 +1,6 @@
 use chrono::Local;
-use database::Database;
-use rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN};
+use crate::database::Database;
+use crate::rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN};
 use std::collections::HashMap;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
@@ -23,9 +23,9 @@ impl<'a> Report<'a> {
             format!("{:.2} B", size)
         } else {
             match size.log2() as usize {
-                0...9 => format!("{:.2} B", size),
-                10...19 => format!("{:.2} KB", size / 10f64.exp2()),
-                20...29 => format!("{:.2} МB", size / 20f64.exp2()),
+                0..=9 => format!("{:.2} B", size),
+                10..=19 => format!("{:.2} KB", size / 10f64.exp2()),
+                20..=29 => format!("{:.2} МB", size / 20f64.exp2()),
                 _ => format!("{:.2} GB", size / 30f64.exp2()),
             }
         }

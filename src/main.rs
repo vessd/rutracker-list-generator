@@ -1,28 +1,17 @@
 #![allow(dead_code)]
-#![allow(proc_macro_derive_resolution_fallback)]
 
-extern crate chrono;
-extern crate cookie;
 #[macro_use]
 extern crate diesel;
-extern crate encoding_rs;
 #[macro_use]
 extern crate failure;
-extern crate kuchiki;
-extern crate reqwest;
-extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
 #[macro_use]
 extern crate slog;
-extern crate slog_async;
 #[macro_use]
 extern crate slog_scope;
-extern crate slog_term;
-extern crate toml;
-extern crate url;
 
 #[macro_use]
 mod log;
@@ -35,11 +24,11 @@ mod database;
 mod report;
 mod rutracker;
 
-use config::{ClientName, Config};
-use control::Control;
+use crate::config::{ClientName, Config};
+use crate::control::Control;
 //use download::Downloader;
-use report::Report;
-use rutracker::{RutrackerApi, RutrackerForum};
+use crate::report::Report;
+use crate::rutracker::{RutrackerApi, RutrackerForum};
 
 fn run() -> i32 {
     let guard = slog_scope::set_global_logger(log::pre_init());

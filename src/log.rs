@@ -1,5 +1,5 @@
 use chrono::Local;
-use config::{Log, LogDestination};
+use crate::config::{Log, LogDestination};
 use slog::{self, Drain, Level};
 use slog_async::{Async, OverflowStrategy};
 use slog_term::{self, FullFormat, PlainDecorator, PlainSyncDecorator, TermDecorator};
@@ -70,7 +70,7 @@ enum Decorator {
 
 impl slog_term::Decorator for Decorator {
     fn with_record<F>(
-        &self, record: &slog::Record, logger_values: &slog::OwnedKVList, f: F,
+        &self, record: &slog::Record<'_>, logger_values: &slog::OwnedKVList, f: F,
     ) -> io::Result<()>
     where
         F: FnOnce(&mut dyn slog_term::RecordDecorator) -> io::Result<()>,

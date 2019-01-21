@@ -1,4 +1,4 @@
-use config::ForumConfig;
+use crate::config::ForumConfig;
 use cookie;
 use encoding_rs::WINDOWS_1251;
 use kuchiki::traits::TendrilSink;
@@ -262,7 +262,7 @@ impl Deref for Topic {
 }
 
 impl Topic {
-    fn iter(&self) -> IterPage {
+    fn iter(&self) -> IterPage<'_> {
         IterPage {
             url: self.forum.rutracker.url.as_str(),
             href: Some(format!("viewtopic.php?t={}", self.id)),
@@ -388,7 +388,7 @@ impl Deref for Forum {
 }
 
 impl Forum {
-    fn iter(&self) -> IterPage {
+    fn iter(&self) -> IterPage<'_> {
         IterPage {
             url: self.rutracker.url.as_str(),
             href: Some(format!("viewforum.php?f={}", self.id)),

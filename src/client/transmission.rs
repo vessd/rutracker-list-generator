@@ -55,7 +55,7 @@ macro_rules! enum_number_de {
                 impl<'de> ::serde::de::Visitor<'de> for Visitor {
                     type Value = $name;
 
-                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                         formatter.write_str("positive integer")
                     }
 
@@ -146,7 +146,7 @@ macro_rules! requ_json {
 
 macro_rules! empty_response {
     ($name:ident, $method:tt $(,$argname:ident : $argtype:ident : $argstring:tt)*) => {
-        pub fn $name(&self, t: TorrentSelect $(,$argname:$argtype)*) -> Result<()> {
+        pub fn $name(&self, t: TorrentSelect<'_> $(,$argname:$argtype)*) -> Result<()> {
             match self.request(&requ_json!(t,$method $(,$argstring:$argname)*))?.json::<Response>()?.result {
                 ResponseStatus::Success => Ok(()),
                 ResponseStatus::Error(error) => Err(TransmissionError::ResponseError{ error }.into()),
@@ -223,7 +223,7 @@ impl Transmission {
     empty_response!(remove, "torrent-remove", d:DeleteLocalData:"delete-local-data");
 
     /// Get a list of torrents from the Transmission.
-    pub fn get(&self, t: TorrentSelect, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
+    pub fn get(&self, t: TorrentSelect<'_>, f: &[ArgGet]) -> Result<Vec<ResponseGet>> {
         let responce = self
             .request(&requ_json!(t, "torrent-get", "fields": f))?
             .json::<Response>()?;

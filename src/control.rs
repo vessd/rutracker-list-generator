@@ -1,6 +1,6 @@
-use client::{TorrentClient, TorrentStatus};
-use config::Subforum;
-use database::Database;
+use crate::client::{TorrentClient, TorrentStatus};
+use crate::config::Subforum;
+use crate::database::Database;
 
 pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
 

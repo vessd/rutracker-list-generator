@@ -3,15 +3,15 @@ mod schema;
 
 use self::models::{Forum, KeeperTorrent, LocalTorrent, Topic, Torrent};
 use self::schema::{forums, keeper_torrents, local_torrents, topics, torrents};
-use client;
+use crate::client;
 use diesel::dsl::{delete, insert_into, insert_or_ignore_into, replace_into, sql, update};
 use diesel::prelude::{
     Connection, ExpressionMethods, GroupByDsl, JoinOnDsl, OptionalExtension, QueryDsl, QueryResult,
     RunQueryDsl, SqliteConnection,
 };
 use diesel::sql_types::{Double, Integer};
-use rutracker::forum::Topic as RutrackerTopic;
-use rutracker::{RutrackerApi, RutrackerForum};
+use crate::rutracker::forum::Topic as RutrackerTopic;
+use crate::rutracker::{RutrackerApi, RutrackerForum};
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -27,7 +27,7 @@ pub struct Database {
 }
 
 impl fmt::Debug for Database {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "Database {{ api: {:?}, forum: {:?}, sqlite: SqliteConnection }}",
@@ -194,7 +194,7 @@ impl Database {
     }
 
     pub fn save_torrent(&self, torrent: Vec<client::Torrent>, url: &str) -> Result<()> {
-        let local: Vec<LocalTorrent> = torrent
+        let local: Vec<LocalTorrent<'_>> = torrent
             .into_iter()
             .map(|t| LocalTorrent {
                 hash: t.hash,

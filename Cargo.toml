@@ -2,11 +2,12 @@
 name = "rlg"
 version = "0.1.0"
 authors = ["Sergey Veselkov <veselkovsd@yandex.ru>"]
+edition = "2018"
 
 [dependencies]
 chrono = { version = "0.4.6", features = ["serde"] }
 cookie = "0.11.0"
-diesel = { version = "1.3.3", default-features = false, features = ["sqlite", "chrono"] }
+diesel = { version = "1.4.0", default-features = false, features = ["sqlite", "chrono"] }
 encoding_rs = "0.8.14"
 failure = "0.1.5"
 # https://crates.io/crates/scraper

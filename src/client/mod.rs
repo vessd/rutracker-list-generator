@@ -42,13 +42,13 @@ pub trait TorrentClient: Debug {
     /// Returns a list of all torrents in the client.
     fn list(&self) -> Result<Vec<Torrent>>;
     /// Starts a list of torrents.
-    fn start(&self, &[String]) -> Result<()>;
+    fn start(&self, _: &[String]) -> Result<()>;
     /// Stop a list of torrents.
-    fn stop(&self, &[String]) -> Result<()>;
+    fn stop(&self, _: &[String]) -> Result<()>;
     /// Remove a list of torrents from client.
     ///
     /// If the second parameter is true, then it also removes local data.
-    fn remove(&self, &[String], bool) -> Result<()>;
+    fn remove(&self, _: &[String], _: bool) -> Result<()>;
 }
 
 impl From<TStatus> for TorrentStatus {
