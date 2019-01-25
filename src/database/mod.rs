@@ -4,14 +4,14 @@ mod schema;
 use self::models::{Forum, KeeperTorrent, LocalTorrent, Topic, Torrent};
 use self::schema::{forums, keeper_torrents, local_torrents, topics, torrents};
 use crate::client;
+use crate::rutracker::forum::Topic as RutrackerTopic;
+use crate::rutracker::{RutrackerApi, RutrackerForum};
 use diesel::dsl::{delete, insert_into, insert_or_ignore_into, replace_into, sql, update};
 use diesel::prelude::{
     Connection, ExpressionMethods, GroupByDsl, JoinOnDsl, OptionalExtension, QueryDsl, QueryResult,
     RunQueryDsl, SqliteConnection,
 };
 use diesel::sql_types::{Double, Integer};
-use crate::rutracker::forum::Topic as RutrackerTopic;
-use crate::rutracker::{RutrackerApi, RutrackerForum};
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -133,6 +133,7 @@ impl Database {
             ))
             .group_by(forums::id)
             .filter(torrents::forum_id.eq_any(forum_id))
+            .filter(local_torrents::status.eq(client::TorrentStatus::Seeding as i16))
             .get_results(&self.sqlite)?)
     }
 
@@ -140,6 +141,7 @@ impl Database {
         Ok(torrents::table
             .inner_join(local_torrents::table.on(local_torrents::hash.eq(torrents::hash)))
             .filter(torrents::forum_id.eq(forum_id))
+            .filter(local_torrents::status.eq(client::TorrentStatus::Seeding as i16))
             .select((torrents::topic_id, torrents::title, torrents::size))
             .load(&self.sqlite)?)
     }
