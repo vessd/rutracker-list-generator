@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use toml;
 
-pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
+pub type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct User {
@@ -30,12 +30,12 @@ pub enum LogDestination {
     File(PathBuf),
 }
 
-impl<'de> ::serde::Deserialize<'de> for LogDestination {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+impl<'de> serde::Deserialize<'de> for LogDestination {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
-        D: ::serde::Deserializer<'de>,
+        D: serde::Deserializer<'de>,
     {
-        ::serde::Deserialize::deserialize(deserializer).map(|path: &str| match path {
+        serde::Deserialize::deserialize(deserializer).map(|path: &str| match path {
             "stdout" => LogDestination::Stdout,
             "stderr" => LogDestination::Stderr,
             _ => LogDestination::File(PathBuf::from(path)),
@@ -52,7 +52,7 @@ pub struct Log {
 
 impl Default for Log {
     fn default() -> Self {
-        Log {
+        Self {
             destination: LogDestination::Stdout,
             level: 3,
         }

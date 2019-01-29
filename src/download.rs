@@ -5,7 +5,7 @@ use rutracker::RutrackerForum;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-type Result<T> = ::std::result::Result<T, ::failure::Error>;
+type Result<T> = std::result::Result<T, failure::Error>;
 
 pub struct Downloader<'a> {
     db: &'a Database,

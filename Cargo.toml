@@ -8,11 +8,10 @@ edition = "2018"
 chrono = { version = "0.4.6", features = ["serde"] }
 cookie = "0.11.0"
 diesel = { version = "1.4.1", default-features = false, features = ["sqlite", "chrono"] }
-encoding_rs = "0.8.14"
+encoding_rs = "0.8.15"
 failure = "0.1.5"
-# https://crates.io/crates/scraper
-kuchiki = "0.7.2"
 reqwest = { version = "0.9.9", default-features = false , features = ["rustls-tls"] }
+scraper = "0.9.1"
 serde = "1.0.85"
 serde_derive = "1.0.85"
 serde_json = "1.0.37"

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
-type Result<T> = ::std::result::Result<T, ::failure::Error>;
+type Result<T> = std::result::Result<T, failure::Error>;
 
 pub struct Database {
     pub api: RutrackerApi,
@@ -87,8 +87,9 @@ impl Database {
                 i += 1;
             }
             let torrents: Vec<_> = p
-                .get_stored_torrents()
-                .into_iter()
+                .stored_torrents
+                .iter()
+                .cloned()
                 .map(|id| KeeperTorrent {
                     keeper: Cow::from(p.author.as_str()),
                     topic_id: id,
@@ -316,7 +317,7 @@ impl Database {
 
     pub fn update_torrent_info(&self, forum_id: i16) -> Result<()> {
         let tor_info = self.api.pvc(forum_id)?;
-        self.sqlite.transaction::<_, ::failure::Error, _>(|| {
+        self.sqlite.transaction::<_, failure::Error, _>(|| {
             for (id, info) in &tor_info {
                 update(torrents::table)
                     .filter(torrents::topic_id.eq(id))
@@ -329,24 +330,22 @@ impl Database {
             }
             Ok(())
         })?;
-        let tor_for_update = self
-            .sqlite
-            .transaction::<Vec<i32>, ::failure::Error, _>(|| {
-                Ok(tor_info
-                    .iter()
-                    .map(|(id, info)| {
-                        torrents::table
-                            .select(torrents::topic_id)
-                            .filter(torrents::topic_id.eq(id))
-                            .filter(torrents::reg_time.ne(info.reg_time))
-                            .get_result::<i32>(&self.sqlite)
-                            .optional()
-                    })
-                    .collect::<QueryResult<Vec<Option<i32>>>>()?
-                    .into_iter()
-                    .filter_map(|v| v)
-                    .collect())
-            })?;
+        let tor_for_update = self.sqlite.transaction::<Vec<i32>, failure::Error, _>(|| {
+            Ok(tor_info
+                .iter()
+                .map(|(id, info)| {
+                    torrents::table
+                        .select(torrents::topic_id)
+                        .filter(torrents::topic_id.eq(id))
+                        .filter(torrents::reg_time.ne(info.reg_time))
+                        .get_result::<i32>(&self.sqlite)
+                        .optional()
+                })
+                .collect::<QueryResult<Vec<Option<i32>>>>()?
+                .into_iter()
+                .filter_map(|v| v)
+                .collect())
+        })?;
         self.update_torrent_data(tor_for_update)?;
         Ok(())
     }

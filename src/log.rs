@@ -1,5 +1,5 @@
-use chrono::Local;
 use crate::config::{Log, LogDestination};
+use chrono::Local;
 use slog::{self, Drain, Level};
 use slog_async::{Async, OverflowStrategy};
 use slog_term::{self, FullFormat, PlainDecorator, PlainSyncDecorator, TermDecorator};
@@ -28,16 +28,14 @@ pub fn init(config: &Log) -> io::Result<slog::Logger> {
     };
 
     let decorator = match &config.destination {
-        LogDestination::Stdout => TermDecorator::new()
-            .stdout()
-            .try_build()
-            .map(Decorator::Term)
-            .unwrap_or_else(|| Decorator::PlainStdout(PlainDecorator::new(io::stdout()))),
-        LogDestination::Stderr => TermDecorator::new()
-            .stderr()
-            .try_build()
-            .map(Decorator::Term)
-            .unwrap_or_else(|| Decorator::PlainStderr(PlainDecorator::new(io::stderr()))),
+        LogDestination::Stdout => TermDecorator::new().stdout().try_build().map_or_else(
+            || Decorator::PlainStdout(PlainDecorator::new(io::stdout())),
+            Decorator::Term,
+        ),
+        LogDestination::Stderr => TermDecorator::new().stderr().try_build().map_or_else(
+            || Decorator::PlainStderr(PlainDecorator::new(io::stderr())),
+            Decorator::Term,
+        ),
         LogDestination::File(path) => Decorator::File(PlainDecorator::new(
             OpenOptions::new()
                 .create(true)

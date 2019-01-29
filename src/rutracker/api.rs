@@ -5,7 +5,7 @@ use chrono::naive::NaiveDateTime;
 use reqwest::{self, Client, IntoUrl, Url};
 use std::collections::HashMap;
 
-pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
+pub type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(Debug, Fail)]
 #[fail(
@@ -31,25 +31,23 @@ pub struct TopicStat {
     pub seeder_last_seen: usize,
 }
 
-impl<'de> ::serde::Deserialize<'de> for TopicStat {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+impl<'de> serde::Deserialize<'de> for TopicStat {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
-        D: ::serde::Deserializer<'de>,
+        D: serde::Deserializer<'de>,
     {
-        ::serde::Deserialize::deserialize(deserializer).map(|stat: (usize, usize, usize)| {
-            TopicStat {
-                seeders: stat.0,
-                leechers: stat.1,
-                seeder_last_seen: stat.2,
-            }
+        serde::Deserialize::deserialize(deserializer).map(|stat: (usize, usize, usize)| Self {
+            seeders: stat.0,
+            leechers: stat.1,
+            seeder_last_seen: stat.2,
         })
     }
 }
 
-impl ::serde::Serialize for TopicStat {
-    fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
+impl serde::Serialize for TopicStat {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
-        S: ::serde::Serializer,
+        S: serde::Serializer,
     {
         use serde::ser::SerializeTuple;
         let mut tup = serializer.serialize_tuple(3)?;
@@ -156,8 +154,8 @@ macro_rules! dynamic {
 impl RutrackerApi {
     pub fn new<S: IntoUrl>(url: S) -> Result<Self> {
         let url = url.into_url()?;
-        let api = RutrackerApi {
-            limit: RutrackerApi::get_limit(&url)?,
+        let api = Self {
+            limit: Self::get_limit(&url)?,
             url,
             http_client: Client::new(),
         };

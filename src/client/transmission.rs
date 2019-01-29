@@ -4,14 +4,14 @@ use reqwest::{self, Client, IntoUrl, StatusCode, Url};
 use serde_json::Value;
 use std::{fmt, result};
 
-pub type Result<T> = result::Result<T, ::failure::Error>;
+pub type Result<T> = result::Result<T, failure::Error>;
 
 #[derive(Debug, Fail)]
 enum TransmissionError {
     #[fail(display = "failed to get SessionId from header")]
     SessionIdNotFound,
     #[fail(display = "unexpected status code: {}", status)]
-    UnexpectedStatus { status: ::reqwest::StatusCode },
+    UnexpectedStatus { status: reqwest::StatusCode },
     #[fail(display = "the transmission server responded with an error: {}", error)]
     ResponseError { error: String },
 }
@@ -46,13 +46,13 @@ macro_rules! enum_number_de {
             $($variant = $value,)*
         }
 
-        impl<'de> ::serde::Deserialize<'de> for $name {
+        impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D>(deserializer: D) -> result::Result<Self, D::Error>
-                where D: ::serde::Deserializer<'de>
+                where D: serde::Deserializer<'de>
             {
                 struct Visitor;
 
-                impl<'de> ::serde::de::Visitor<'de> for Visitor {
+                impl<'de> serde::de::Visitor<'de> for Visitor {
                     type Value = $name;
 
                     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -60,7 +60,7 @@ macro_rules! enum_number_de {
                     }
 
                     fn visit_u64<E>(self, value: u64) -> result::Result<$name, E>
-                        where E: ::serde::de::Error
+                        where E: serde::de::Error
                     {
                         match value {
                             $( $value => Ok($name::$variant), )*
@@ -180,7 +180,7 @@ impl Transmission {
             .get("X-Transmission-Session-Id")
             .ok_or(TransmissionError::SessionIdNotFound)?
             .clone();
-        Ok(Transmission {
+        Ok(Self {
             url,
             user,
             sid,

@@ -2,7 +2,7 @@ use crate::client::{TorrentClient, TorrentStatus};
 use crate::config::Subforum;
 use crate::database::Database;
 
-pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
+pub type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(Debug)]
 pub struct Control<'a> {
@@ -150,7 +150,7 @@ impl<'a> Control<'a> {
             );
             self.remove(id, forum.remove);
             self.stop(id, forum.stop, forum.remove);
-            self.start(id, forum.stop);
+            self.start(id, forum.download);
         }
     }
 }

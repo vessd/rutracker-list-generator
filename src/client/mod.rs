@@ -9,7 +9,7 @@ pub use self::transmission::Transmission;
 use self::transmission::{ArgGet, DeleteLocalData, TorrentSelect, TorrentStatus as TStatus};
 use std::fmt::Debug;
 
-pub type Result<T> = ::std::result::Result<T, ::failure::Error>;
+pub type Result<T> = std::result::Result<T, failure::Error>;
 
 /// Torrent
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub trait TorrentClient: Debug {
 }
 
 impl From<TStatus> for TorrentStatus {
-    fn from(status: TStatus) -> TorrentStatus {
+    fn from(status: TStatus) -> Self {
         match status {
             TStatus::Seeding => TorrentStatus::Seeding,
             TStatus::TorrentIsStopped => TorrentStatus::Stopped,

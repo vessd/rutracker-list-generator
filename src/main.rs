@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+#![warn(rust_2018_idioms)]
+//#![warn(clippy::pedantic)]
 
 #[macro_use]
 extern crate diesel;
