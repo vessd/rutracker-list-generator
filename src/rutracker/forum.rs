@@ -14,7 +14,7 @@ pub type Result<T> = std::result::Result<T, failure::Error>;
 
 pub const MESSAGE_LEN: usize = 120_000;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Clone, Fail)]
 enum ForumError {
     #[fail(display = "failed to get cookie from header")]
     CookieNotFound,
@@ -32,7 +32,7 @@ fn selector(selectors: &str) -> Selector {
     Selector::parse(selectors).expect("css selector parse error")
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct IterPage<'a> {
     url: &'a str,
     href: Option<String>,
@@ -66,7 +66,7 @@ impl<'a> Iterator for IterPage<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct User {
     pub id: usize,
     pub name: String,
@@ -164,7 +164,7 @@ impl User {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Post {
     pub id: i32,
     pub author: String,
@@ -249,7 +249,7 @@ pub struct TopicData {
     forum: Rc<ForumData>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Topic(pub Rc<TopicData>);
 
 impl Deref for Topic {
@@ -361,14 +361,14 @@ impl Topic {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ForumData {
     pub id: usize,
     pub title: String,
     rutracker: Rc<RutrackerForumData>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Forum(pub Rc<ForumData>);
 
 impl Deref for Forum {
@@ -409,7 +409,7 @@ impl Forum {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RutrackerForumData {
     pub user: User,
     client: Client,
@@ -417,7 +417,7 @@ pub struct RutrackerForumData {
     dry_run: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RutrackerForum(pub Rc<RutrackerForumData>);
 
 impl Deref for RutrackerForum {

@@ -7,7 +7,7 @@ use diesel::{
 };
 use std::{borrow::Cow, io::Write};
 
-#[derive(Identifiable, Insertable)]
+#[derive(Debug, Clone, Identifiable, Insertable)]
 #[primary_key(id)]
 pub struct Forum {
     pub id: i16,
@@ -17,7 +17,7 @@ pub struct Forum {
     pub topic_id: i32,
 }
 
-#[derive(Identifiable, Insertable)]
+#[derive(Debug, Clone, Identifiable, Insertable)]
 #[primary_key(keeper, topic_id)]
 pub struct KeeperTorrent<'a> {
     pub keeper: Cow<'a, str>,
@@ -38,7 +38,7 @@ impl ToSql<SmallInt, Sqlite> for Status {
     }
 }
 
-#[derive(Identifiable, Insertable)]
+#[derive(Debug, Clone, Identifiable, Insertable)]
 #[primary_key(hash, url)]
 pub struct LocalTorrent<'a> {
     pub hash: String,
@@ -46,7 +46,7 @@ pub struct LocalTorrent<'a> {
     pub url: Cow<'a, str>,
 }
 
-#[derive(Identifiable, Insertable)]
+#[derive(Debug, Clone, Identifiable, Insertable)]
 #[primary_key(id)]
 pub struct Topic {
     pub id: i32,
@@ -54,7 +54,7 @@ pub struct Topic {
     pub author: String,
 }
 
-#[derive(Identifiable, Insertable)]
+#[derive(Debug, Clone, Identifiable, Insertable)]
 #[primary_key(topic_id)]
 pub struct Torrent {
     pub topic_id: i32,

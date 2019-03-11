@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, failure::Error>;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Clone, Fail)]
 #[fail(
     display = "Rutracker API responded with an error: {}: {{ code: {}, text: {} }}",
     method, code, text
@@ -25,7 +25,7 @@ struct Limit {
     limit: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TopicStat {
     pub seeders: usize,
     pub leechers: usize,
@@ -73,7 +73,7 @@ pub struct TopicData {
     pub seeder_last_seen: usize,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct TopicInfo {
     pub tor_status: i16,
     pub seeders: i16,
