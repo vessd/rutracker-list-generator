@@ -1,10 +1,11 @@
 //! A minimal implementation of rpc client for Tranmission.
-use reqwest::header::HeaderValue;
-use reqwest::{self, Client, IntoUrl, StatusCode, Url};
-use serde_json::Value;
-use std::{fmt, result};
+use failure::Fail;
+use reqwest::{self, header::HeaderValue, Client, IntoUrl, StatusCode, Url};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use serde_repr::Deserialize_repr;
 
-pub type Result<T> = result::Result<T, failure::Error>;
+pub type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(Debug, Fail)]
 enum TransmissionError {
@@ -38,46 +39,10 @@ pub enum ArgGet {
     Status,
 }
 
-// https://github.com/serde-rs/serde/issues/497
-macro_rules! enum_number_de {
-    ($name:ident { $($variant:ident = $value:expr, )* }) => {
-        #[derive(Debug, Clone, Copy)]
-        pub enum $name {
-            $($variant = $value,)*
-        }
-
-        impl<'de> serde::Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> result::Result<Self, D::Error>
-                where D: serde::Deserializer<'de>
-            {
-                struct Visitor;
-
-                impl<'de> serde::de::Visitor<'de> for Visitor {
-                    type Value = $name;
-
-                    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                        formatter.write_str("positive integer")
-                    }
-
-                    fn visit_u64<E>(self, value: u64) -> result::Result<$name, E>
-                        where E: serde::de::Error
-                    {
-                        match value {
-                            $( $value => Ok($name::$variant), )*
-                            _ => Err(E::custom(
-                                format!("unknown {} value: {}",
-                                stringify!($name), value))),
-                        }
-                    }
-                }
-                deserializer.deserialize_u64(Visitor)
-            }
-        }
-    }
-}
-
 /// A enum that represents a torrent status.
-enum_number_de!(TorrentStatus {
+#[derive(Debug, Clone, Copy, Deserialize_repr)]
+#[repr(u8)]
+pub enum TorrentStatus {
     TorrentIsStopped = 0,
     QueuedToCheckFiles = 1,
     CheckingFiles = 2,
@@ -85,7 +50,7 @@ enum_number_de!(TorrentStatus {
     Downloading = 4,
     QueuedToSeed = 5,
     Seeding = 6,
-});
+}
 
 /// A struct that represents a "torrents" object in response body.
 ///

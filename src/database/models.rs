@@ -1,6 +1,11 @@
 use super::schema::{forums, keeper_torrents, local_torrents, topics, torrents};
 use chrono::naive::NaiveDateTime;
-use std::borrow::Cow;
+use diesel::{
+    serialize::{self, Output, ToSql},
+    sql_types::SmallInt,
+    sqlite::Sqlite,
+};
+use std::{borrow::Cow, io::Write};
 
 #[derive(Identifiable, Insertable)]
 #[primary_key(id)]
@@ -19,11 +24,25 @@ pub struct KeeperTorrent<'a> {
     pub topic_id: i32,
 }
 
+#[derive(Debug, Clone, Copy, FromSqlRow, AsExpression)]
+#[sql_type = "SmallInt"]
+pub enum Status {
+    Seeding,
+    Stopped,
+    Other,
+}
+
+impl ToSql<SmallInt, Sqlite> for Status {
+    fn to_sql<W: Write>(&self, out: &mut Output<'_, W, Sqlite>) -> serialize::Result {
+        <i16 as ToSql<SmallInt, Sqlite>>::to_sql(&(*self as i16), out)
+    }
+}
+
 #[derive(Identifiable, Insertable)]
 #[primary_key(hash, url)]
 pub struct LocalTorrent<'a> {
     pub hash: String,
-    pub status: i16,
+    pub status: Status,
     pub url: Cow<'a, str>,
 }
 

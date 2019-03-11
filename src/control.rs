@@ -1,6 +1,8 @@
-use crate::client::{TorrentClient, TorrentStatus};
-use crate::config::Subforum;
-use crate::database::Database;
+use crate::{
+    client::TorrentClient,
+    config::Subforum,
+    database::{models::Status, Database},
+};
 
 pub type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -21,22 +23,22 @@ impl<'a> Control<'a> {
     }
 
     pub fn add_client(&mut self, client: Box<dyn TorrentClient>) -> Result<()> {
-        self.db.save_torrent(client.list()?, client.url())?;
+        self.db.save_torrent(&client.list()?)?;
         self.clients.push(client);
         Ok(())
     }
 
     pub fn start(&mut self, forum_id: i16, stop: i16) {
         let range = (0, stop);
-        let status_vec = &[TorrentStatus::Stopped as i16];
+        let status_vec = &[Status::Stopped];
         let mut count = 0;
         for client in &mut self.clients {
             let hash = error_try!(
-                    self.db
-                        .get_torrents_for_change(client.url(), forum_id, range, status_vec),
-                    continue,
-                    "Не удалось получить список раздач для запуска: {}"
-                );
+                self.db
+                    .get_torrents_for_change(client.url(), forum_id, range, status_vec),
+                continue,
+                "Не удалось получить список раздач для запуска: {}"
+            );
             if self.dry_run {
                 error_try!(
                     self.db.get_topic_id(&hash),
@@ -53,8 +55,7 @@ impl<'a> Control<'a> {
                 );
                 count += hash.len();
                 error_try!(
-                    self.db
-                        .set_status_by_hash(TorrentStatus::Seeding as i16, &hash),
+                    self.db.set_status_by_hash(Status::Seeding, &hash),
                     continue,
                     "Не удалось изменить статус раздач в базе данных: {}"
                 );
@@ -65,15 +66,15 @@ impl<'a> Control<'a> {
 
     pub fn stop(&mut self, forum_id: i16, stop: i16, remove: i16) {
         let range = (stop, remove);
-        let status_vec = &[TorrentStatus::Seeding as i16];
+        let status_vec = &[Status::Seeding];
         let mut count = 0;
         for client in &mut self.clients {
             let hash = error_try!(
-                    self.db
-                        .get_torrents_for_change(client.url(), forum_id, range, status_vec),
-                    continue,
-                    "Не удалось получить список раздач для остановки: {}"
-                );
+                self.db
+                    .get_torrents_for_change(client.url(), forum_id, range, status_vec),
+                continue,
+                "Не удалось получить список раздач для остановки: {}"
+            );
             if self.dry_run {
                 error_try!(
                     self.db.get_topic_id(&hash),
@@ -95,8 +96,7 @@ impl<'a> Control<'a> {
                 );
                 count += hash.len();
                 error_try!(
-                    self.db
-                        .set_status_by_hash(TorrentStatus::Stopped as i16, &hash),
+                    self.db.set_status_by_hash(Status::Stopped, &hash),
                     continue,
                     "Не удалось изменить статус раздач в базе данных: {}"
                 );
@@ -107,15 +107,15 @@ impl<'a> Control<'a> {
 
     pub fn remove(&mut self, forum_id: i16, remove: i16) {
         let range = (remove, i16::max_value());
-        let status_vec = &[TorrentStatus::Seeding as i16, TorrentStatus::Stopped as i16];
+        let status_vec = &[Status::Seeding, Status::Stopped];
         let mut count = 0;
         for client in &mut self.clients {
             let hash = error_try!(
-                    self.db
-                        .get_torrents_for_change(client.url(), forum_id, range, status_vec),
-                    continue,
-                    "Не удалось получить список раздач для удаления: {}"
-                );
+                self.db
+                    .get_torrents_for_change(client.url(), forum_id, range, status_vec),
+                continue,
+                "Не удалось получить список раздач для удаления: {}"
+            );
             if self.dry_run {
                 error_try!(
                     self.db.get_topic_id(&hash),

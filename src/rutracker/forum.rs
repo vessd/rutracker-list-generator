@@ -1,12 +1,13 @@
 use crate::config::ForumConfig;
 use cookie;
 use encoding_rs::WINDOWS_1251;
-use reqwest::header::{HeaderMap, CONTENT_TYPE, COOKIE, SET_COOKIE};
-use reqwest::{Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode};
-use scraper::element_ref::ElementRef;
-use scraper::{Html, Selector};
-use std::ops::Deref;
-use std::rc::Rc;
+use failure::Fail;
+use reqwest::{
+    header::{HeaderMap, CONTENT_TYPE, COOKIE, SET_COOKIE},
+    Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode,
+};
+use scraper::{element_ref::ElementRef, Html, Selector};
+use std::{ops::Deref, rc::Rc};
 use url::form_urlencoded;
 
 pub type Result<T> = std::result::Result<T, failure::Error>;

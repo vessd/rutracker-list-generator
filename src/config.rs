@@ -1,7 +1,5 @@
-use std::default::Default;
-use std::fs;
-use std::path::PathBuf;
-use toml;
+use serde::Deserialize;
+use std::{default::Default, fs, path::PathBuf};
 
 pub type Result<T> = std::result::Result<T, failure::Error>;
 

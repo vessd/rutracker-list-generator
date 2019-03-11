@@ -1,22 +1,25 @@
-mod models;
+pub mod models;
 mod schema;
 
-use self::models::{Forum, KeeperTorrent, LocalTorrent, Topic, Torrent};
-use self::schema::{forums, keeper_torrents, local_torrents, topics, torrents};
-use crate::client;
-use crate::rutracker::forum::Topic as RutrackerTopic;
-use crate::rutracker::{RutrackerApi, RutrackerForum};
-use diesel::dsl::{delete, insert_into, insert_or_ignore_into, replace_into, sql, update};
-use diesel::prelude::{
-    Connection, ExpressionMethods, GroupByDsl, JoinOnDsl, OptionalExtension, QueryDsl, QueryResult,
-    RunQueryDsl, SqliteConnection,
+use self::{
+    models::{Forum, KeeperTorrent, LocalTorrent, Status, Topic, Torrent},
+    schema::{forums, keeper_torrents, local_torrents, topics, torrents},
 };
-use diesel::sql_types::{Double, Integer};
-use std::borrow::Cow;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::fmt;
-use std::rc::Rc;
+use crate::rutracker::{forum::Topic as RutrackerTopic, RutrackerApi, RutrackerForum};
+use diesel::{
+    dsl::{delete, insert_into, insert_or_ignore_into, replace_into, sql, update},
+    prelude::{
+        Connection, ExpressionMethods, GroupByDsl, JoinOnDsl, OptionalExtension, QueryDsl,
+        QueryResult, RunQueryDsl, SqliteConnection,
+    },
+    sql_types::{Double, Integer},
+};
+use std::{
+    borrow::Cow,
+    collections::{hash_map::Entry, HashMap},
+    fmt,
+    rc::Rc,
+};
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -134,7 +137,7 @@ impl Database {
             ))
             .group_by(forums::id)
             .filter(torrents::forum_id.eq_any(forum_id))
-            .filter(local_torrents::status.eq(client::TorrentStatus::Seeding as i16))
+            .filter(local_torrents::status.eq(Status::Seeding))
             .get_results(&self.sqlite)?)
     }
 
@@ -142,7 +145,7 @@ impl Database {
         Ok(torrents::table
             .inner_join(local_torrents::table.on(local_torrents::hash.eq(torrents::hash)))
             .filter(torrents::forum_id.eq(forum_id))
-            .filter(local_torrents::status.eq(client::TorrentStatus::Seeding as i16))
+            .filter(local_torrents::status.eq(Status::Seeding))
             .select((torrents::topic_id, torrents::title, torrents::size))
             .load(&self.sqlite)?)
     }
@@ -184,7 +187,11 @@ impl Database {
     }
 
     pub fn get_torrents_for_change(
-        &self, url: &str, forum_id: i16, seeders: (i16, i16), status: &[i16],
+        &self,
+        url: &str,
+        forum_id: i16,
+        seeders: (i16, i16),
+        status: &[Status],
     ) -> Result<Vec<String>> {
         Ok(torrents::table
             .inner_join(local_torrents::table.on(local_torrents::hash.eq(torrents::hash)))
@@ -196,17 +203,9 @@ impl Database {
             .get_results(&self.sqlite)?)
     }
 
-    pub fn save_torrent(&self, torrent: Vec<client::Torrent>, url: &str) -> Result<()> {
-        let local: Vec<LocalTorrent<'_>> = torrent
-            .into_iter()
-            .map(|t| LocalTorrent {
-                hash: t.hash,
-                status: t.status as i16,
-                url: Cow::from(url),
-            })
-            .collect();
+    pub fn save_torrent(&self, local: &[LocalTorrent<'_>]) -> Result<()> {
         insert_into(local_torrents::table)
-            .values(&local)
+            .values(local)
             .execute(&self.sqlite)?;
         let unavailable = local_torrents::table
             .select(local_torrents::hash)
@@ -224,7 +223,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn set_status_by_hash(&self, status: i16, hash: &[String]) -> Result<()> {
+    pub fn set_status_by_hash(&self, status: Status, hash: &[String]) -> Result<()> {
         update(local_torrents::table)
             .filter(local_torrents::hash.eq_any(hash))
             .set(local_torrents::status.eq(status))
@@ -232,7 +231,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn set_status_by_id(&self, status: i16, topic_id: &[i32]) -> Result<()> {
+    pub fn set_status_by_id(&self, status: Status, topic_id: &[i32]) -> Result<()> {
         self.set_status_by_hash(
             status,
             &torrents::table

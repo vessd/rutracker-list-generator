@@ -3,8 +3,10 @@ use chrono::Local;
 use slog::{self, Drain, Level};
 use slog_async::{Async, OverflowStrategy};
 use slog_term::{self, FullFormat, PlainDecorator, PlainSyncDecorator, TermDecorator};
-use std::fs::{File, OpenOptions};
-use std::io;
+use std::{
+    fs::{File, OpenOptions},
+    io,
+};
 
 pub fn pre_init() -> slog::Logger {
     let decorator = PlainSyncDecorator::new(io::stdout());
@@ -68,7 +70,10 @@ enum Decorator {
 
 impl slog_term::Decorator for Decorator {
     fn with_record<F>(
-        &self, record: &slog::Record<'_>, logger_values: &slog::OwnedKVList, f: F,
+        &self,
+        record: &slog::Record<'_>,
+        logger_values: &slog::OwnedKVList,
+        f: F,
     ) -> io::Result<()>
     where
         F: FnOnce(&mut dyn slog_term::RecordDecorator) -> io::Result<()>,

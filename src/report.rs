@@ -1,5 +1,7 @@
-use crate::database::Database;
-use crate::rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN};
+use crate::{
+    database::Database,
+    rutracker::forum::{Post, RutrackerForum, Topic, MESSAGE_LEN},
+};
 use chrono::Local;
 use std::collections::HashMap;
 
@@ -240,7 +242,9 @@ impl<'a> Report<'a> {
         if let Some(post) = posts.get(0) {
             post.edit(message.as_str())?;
             if posts.len() > 1 {
-                warn!("В теме сводных отчётов должно быть не больше одного сообщения");
+                warn!(
+                    "В теме сводных отчётов должно быть не больше одного сообщения"
+                );
             }
         } else {
             summary_report.reply(message.as_str())?;

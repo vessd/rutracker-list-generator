@@ -1,8 +1,9 @@
 //! A module to access Rutracker API
 
-use chrono::naive::serde::ts_seconds;
-use chrono::naive::NaiveDateTime;
+use chrono::naive::{serde::ts_seconds, NaiveDateTime};
+use failure::Fail;
 use reqwest::{self, Client, IntoUrl, Url};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, failure::Error>;

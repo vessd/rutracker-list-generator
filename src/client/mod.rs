@@ -3,44 +3,19 @@
 mod deluge;
 mod transmission;
 
-pub use self::deluge::Deluge;
-pub use self::transmission::Transmission;
+pub use self::{deluge::Deluge, transmission::Transmission};
 
 use self::transmission::{ArgGet, DeleteLocalData, TorrentSelect, TorrentStatus as TStatus};
+use crate::database::models::{LocalTorrent, Status};
 use std::fmt::Debug;
 
 pub type Result<T> = std::result::Result<T, failure::Error>;
-
-/// Torrent
-#[derive(Debug, Clone)]
-pub struct Torrent {
-    pub hash: String,
-    pub status: TorrentStatus,
-}
-
-/// Torrent status.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
-pub enum TorrentStatus {
-    Seeding,
-    Stopped,
-    Other,
-}
-
-impl From<i16> for TorrentStatus {
-    fn from(status: i16) -> Self {
-        match status {
-            0 => TorrentStatus::Seeding,
-            1 => TorrentStatus::Stopped,
-            _ => TorrentStatus::Other,
-        }
-    }
-}
 
 /// A trait for any object that will represent a torrent client.
 pub trait TorrentClient: Debug {
     fn url(&self) -> &str;
     /// Returns a list of all torrents in the client.
-    fn list(&self) -> Result<Vec<Torrent>>;
+    fn list(&self) -> Result<Vec<LocalTorrent<'_>>>;
     /// Starts a list of torrents.
     fn start(&self, _: &[String]) -> Result<()>;
     /// Stop a list of torrents.
@@ -51,12 +26,12 @@ pub trait TorrentClient: Debug {
     fn remove(&self, _: &[String], _: bool) -> Result<()>;
 }
 
-impl From<TStatus> for TorrentStatus {
+impl From<TStatus> for Status {
     fn from(status: TStatus) -> Self {
         match status {
-            TStatus::Seeding => TorrentStatus::Seeding,
-            TStatus::TorrentIsStopped => TorrentStatus::Stopped,
-            _ => TorrentStatus::Other,
+            TStatus::Seeding => Status::Seeding,
+            TStatus::TorrentIsStopped => Status::Stopped,
+            _ => Status::Other,
         }
     }
 }
@@ -65,13 +40,14 @@ impl TorrentClient for Transmission {
     fn url(&self) -> &str {
         self.url()
     }
-    fn list(&self) -> Result<Vec<Torrent>> {
+    fn list(&self) -> Result<Vec<LocalTorrent<'_>>> {
         Ok(self
             .get(TorrentSelect::All, &[ArgGet::HashString, ArgGet::Status])?
             .into_iter()
-            .map(|resp| Torrent {
+            .map(|resp| LocalTorrent {
                 hash: resp.hash.to_uppercase(),
                 status: resp.status.into(),
+                url: self.url().into(),
             })
             .collect())
     }
@@ -93,7 +69,7 @@ impl TorrentClient for Deluge {
     fn url(&self) -> &str {
         unimplemented!();
     }
-    fn list(&self) -> Result<Vec<Torrent>> {
+    fn list(&self) -> Result<Vec<LocalTorrent<'_>>> {
         unimplemented!();
     }
     fn start(&self, _hashes: &[String]) -> Result<()> {
