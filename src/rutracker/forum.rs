@@ -1,9 +1,8 @@
 use crate::config::ForumConfig;
-use cookie;
 use encoding_rs::WINDOWS_1251;
 use failure::Fail;
 use reqwest::{
-    header::{HeaderMap, CONTENT_TYPE, COOKIE, SET_COOKIE},
+    header::{HeaderMap, CONTENT_TYPE, COOKIE},
     Client, ClientBuilder, Proxy, RedirectPolicy, StatusCode,
 };
 use scraper::{element_ref::ElementRef, Html, Selector};
@@ -120,8 +119,7 @@ impl User {
             ])
             .send()?;
         let mut cookies = String::new();
-        for c in resp.headers().get_all(SET_COOKIE).iter() {
-            let c = cookie::Cookie::parse(c.to_str()?)?;
+        for c in resp.cookies() {
             if !cookies.is_empty() {
                 cookies.push_str("; ");
             }

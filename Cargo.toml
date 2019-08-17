@@ -6,20 +6,19 @@ edition = "2018"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-cookie = "0.11"
 diesel = { version = "1.4", default-features = false, features = ["sqlite", "chrono"] }
 encoding_rs = "0.8"
 failure = "0.1"
-reqwest = { version = "0.9", default-features = false , features = ["rustls-tls"] }
-scraper = "0.9"
+reqwest = { version = "0.9" , features = ["socks"] }
+scraper = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_repr = "0.1"
-slog = { version = "2.4", features = ["max_level_trace", "release_max_level_debug"] }
+slog = { version = "2.5", features = ["max_level_trace", "release_max_level_debug"] }
 slog-async = "2.3"
 slog-scope = "4.1"
 slog-term = "2.4"
-toml = "0.4"
+toml = "0.5"
 url = "1.7"
 
 [profile.release]
