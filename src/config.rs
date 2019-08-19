@@ -72,25 +72,23 @@ pub struct Client {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct Subforum {
     pub id: Vec<i16>,
-    #[serde(default = "remove")]
     pub remove: i16,
-    #[serde(default = "stop")]
     pub stop: i16,
-    #[serde(default = "download")]
     pub download: i16,
 }
 
-fn remove() -> i16 {
-    11
-}
-
-fn stop() -> i16 {
-    5
-}
-fn download() -> i16 {
-    2
+impl Default for Subforum {
+    fn default() -> Self {
+        Self {
+            id: Vec::new(),
+            remove: 11,
+            stop: 5,
+            download: 2,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +112,14 @@ fn api_url() -> String {
 
 impl Config {
     pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        Ok(toml::from_slice(&fs::read(path.into())?)?)
+        let mut config: Config = toml::from_slice(&fs::read(path.into())?)?;
+        config.subforum.retain(|s| !s.id.is_empty());
+        dbg!(&config);
+        match config.subforum.is_empty() {
+            true => Err(failure::err_msg(
+                "Не указано ни одного подраздела",
+            )),
+            false => Ok(config),
+        }
     }
 }

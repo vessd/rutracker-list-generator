@@ -55,7 +55,7 @@ fn run() -> i32 {
         "Авторизация на форуме завершилась с ошибкой: {}"
     );
 
-    /* info!("Подключение к базе данных...");
+    info!("Подключение к базе данных...");
     let database = crit_try!(
         database::Database::new(api, forum),
         "Подключение к базе данных завершилось с ошибкой: {}"
@@ -109,12 +109,8 @@ fn run() -> i32 {
     );
 
     info!("Формирование списка раздач для загрузки...");
-    let downloader = Downloader::new(&database, &config.ignored_id); */
-    /* for f in &config.subforum {
-        downloader
-            .get_list_for_download(f)
-            .expect("get_list_for_download");
-    } */
+    let downloader = Downloader::new(&database, &config.ignored_id);
+    for f in &config.subforum {}
 
     info!("Готово!");
     0

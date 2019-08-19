@@ -80,23 +80,27 @@ pub struct TopicInfo {
     #[serde(with = "ts_seconds")]
     pub reg_time: NaiveDateTime,
     pub tor_size_bytes: f64,
+    pub keeping_priority: i16,
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum OptionInfo {
     None(),
-    Some((i16, i16, i64, f64)),
+    Some((i16, i16, i64, f64, i16)),
 }
 
 impl From<OptionInfo> for Option<TopicInfo> {
     fn from(info: OptionInfo) -> Self {
-        if let OptionInfo::Some((tor_status, seeders, reg_time, tor_size_bytes)) = info {
+        if let OptionInfo::Some((tor_status, seeders, reg_time, tor_size_bytes, keeping_priority)) =
+            info
+        {
             Some(TopicInfo {
                 tor_status,
                 seeders,
                 reg_time: NaiveDateTime::from_timestamp(reg_time, 0),
                 tor_size_bytes,
+                keeping_priority,
             })
         } else {
             None

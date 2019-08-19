@@ -14,7 +14,8 @@ impl<'a> Downloader<'a> {
         Self { db, ignored_id }
     }
 
-    pub fn get_suggestion(&self, forum: &Subforum) -> Result<Vec<Torrent>> {
+    pub fn get_torrents_for_download(&self, forum: &Subforum) -> Result<Vec<Torrent>> {
+        //self.db.
         Ok(Vec::new())
     }
 }
