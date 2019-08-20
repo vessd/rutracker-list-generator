@@ -139,7 +139,7 @@ macro_rules! dynamic {
             };
             let mut result = HashMap::new();
             for chunk in $arrayname.chunks(self.limit) {
-                let val = chunk.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",");
+                let val = chunk.iter().map(<$key>::to_string).collect::<Vec<String>>().join(",");
                 let mut url = base_url.clone();
                 url.query_pairs_mut().append_pair("val", val.as_str());
                 debug!(concat!("RutrackerApi::",stringify!($name),"::url: {:?}"), url);

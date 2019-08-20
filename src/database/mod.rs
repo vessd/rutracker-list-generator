@@ -69,7 +69,7 @@ impl Database {
                 .select((forums::tor_count, forums::tor_size_bytes))
                 .get_result(&self.sqlite)
                 .optional()?
-                .unwrap_or((0, 0f64)))
+                .unwrap_or((0, 0_f64)))
         }
     }
 
@@ -117,7 +117,7 @@ impl Database {
             .group_by(keeper_torrents::keeper)
             .filter(torrents::forum_id.eq(forum_id))
             .get_results::<(String, i32, f64)>(&self.sqlite)?;
-        let mut vec: Vec<(String, i32, f64)> = vec![("".to_owned(), 0, 0f64); buf.len()];
+        let mut vec: Vec<(String, i32, f64)> = vec![("".to_owned(), 0, 0_f64); buf.len()];
         for v in buf {
             let i = keeper[v.0.as_str()];
             vec[i] = v;

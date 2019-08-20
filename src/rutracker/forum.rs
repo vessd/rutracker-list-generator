@@ -143,7 +143,7 @@ impl User {
             .skip_while(|s| !s.starts_with("bt:"))
             .filter(|s| !s.contains(':'))
             .take(3)
-            .map(|s| s.trim());
+            .map(str::trim);
         Some((
             keys.next()?.to_owned(),
             keys.next()?.to_owned(),

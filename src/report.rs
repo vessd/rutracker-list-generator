@@ -21,14 +21,14 @@ impl<'a> Report<'a> {
     }
 
     fn convert_size(size: f64) -> String {
-        if size < 1f64 {
+        if size < 1_f64 {
             format!("{:.2} B", size)
         } else {
             match size.log2() as usize {
                 0..=9 => format!("{:.2} B", size),
-                10..=19 => format!("{:.2} KB", size / 10f64.exp2()),
-                20..=29 => format!("{:.2} MB", size / 20f64.exp2()),
-                _ => format!("{:.2} GB", size / 30f64.exp2()),
+                10..=19 => format!("{:.2} KB", size / 10_f64.exp2()),
+                20..=29 => format!("{:.2} MB", size / 20_f64.exp2()),
+                _ => format!("{:.2} GB", size / 30_f64.exp2()),
             }
         }
     }

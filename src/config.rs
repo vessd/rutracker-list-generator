@@ -112,14 +112,14 @@ fn api_url() -> String {
 
 impl Config {
     pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        let mut config: Config = toml::from_slice(&fs::read(path.into())?)?;
+        let mut config: Self = toml::from_slice(&fs::read(path.into())?)?;
         config.subforum.retain(|s| !s.id.is_empty());
-        dbg!(&config);
-        match config.subforum.is_empty() {
-            true => Err(failure::err_msg(
+        if config.subforum.is_empty() {
+            Err(failure::err_msg(
                 "Не указано ни одного подраздела",
-            )),
-            false => Ok(config),
+            ))
+        } else {
+            Ok(config)
         }
     }
 }

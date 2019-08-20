@@ -2,6 +2,8 @@
 #![warn(rust_2018_idioms)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::unreadable_literal)]
 
 #[macro_use]
 extern crate diesel;
@@ -31,7 +33,7 @@ use crate::{
 };
 
 fn run() -> i32 {
-    let guard = slog_scope::set_global_logger(log::pre_init());
+    let _guard = slog_scope::set_global_logger(log::pre_init());
     let config = crit_try!(
         Config::from_file("rlg.toml"),
         "Ошибка при чтении файла: {}"
@@ -40,7 +42,6 @@ fn run() -> i32 {
         log::init(&config.log),
         "Не удалось инициализировать логгер: {}"
     );
-    drop(guard);
     let _guard = slog_scope::set_global_logger(logger);
 
     info!("Соединение с Rutracker API...");
